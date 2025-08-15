@@ -10,6 +10,9 @@
   "scripts": {
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
+    "seed": "node scripts/seed-dev.js",
+    "import:subs": "node scripts/import-subscribers.js data/subscribers.csv 2025-2026",
+    "migrate:sub-index": "node scripts/migrate-subscriber-index.js",
     "test": "jest --runInBand",
     "lint": "eslint ."
   },
@@ -36,3 +39,4 @@
     "supertest": "^6.3.4"
   }
 }
+

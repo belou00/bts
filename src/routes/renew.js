@@ -6,8 +6,12 @@ const Order = require('../models/Order');
 const { splitInstallments } = require('../utils/money');
 const { createCheckout } = require('../payments/helloasso');
 const { orderNo } = require('../utils/ids');
+const { getPriceFor } = require('../services/pricing');
+const { holdSeat } = require('../controllers/seat');
+const { checkPhase } = require('../middlewares/phase');
 
 function decodeToken(token) { return jwt.verify(token, process.env.JWT_SECRET); }
+
 
 router.get('/', async (req,res,next)=>{
   try{
@@ -48,3 +52,6 @@ router.post('/', async (req,res,next)=>{
 });
 
 module.exports = router;
+
+
+
