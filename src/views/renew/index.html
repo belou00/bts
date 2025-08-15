@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <title>Renouvellement Abonnement</title>
+  <link rel="stylesheet" href="/views/css/main.css" />
+</head>
+<body>
+  <h1>Renouvellement</h1>
+  <div id="app"></div>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const id = params.get('id');
+    fetch(`/api/v1/renew?id=${encodeURIComponent(id)}`).then(r=>r.json()).then(data=>{
+      // générer le formulaire dynamiquement (sièges, tarifs, justificatifs)
+    });
+
+    async function submitForm(payload){
+      const r = await fetch(`/api/v1/renew?id=${encodeURIComponent(id)}`,{
+        method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)
+      });
+      const { checkoutUrl } = await r.json();
+      location.href = checkoutUrl;
+    }
+  </script>
+</body>
+</html>
