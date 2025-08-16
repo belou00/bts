@@ -1,18 +1,51 @@
+// src/routes/admin.js
 const router = require('express').Router();
-const Zone = require('../models/Zone');
-const Seat = require('../models/Seat');
-const PriceTable = require('../models/PriceTable');
 const { requireAdmin } = require('../middlewares/authz');
+const Season = require('../models/Season');
+const Seat = require('../models/Seat');
 
-router.post('/zones', requireAdmin, async (req,res)=>{ res.json(await Zone.create(req.body)); });
-router.get('/zones', requireAdmin, async (_req,res)=>{ res.json(await Zone.find({})); });
-
-router.post('/seats/:seatId/block', requireAdmin, async (req,res)=>{
-  const seat = await Seat.findOneAndUpdate({ seatId: req.params.seatId }, { $set:{ status:'blocked', blockerReason:req.body.reason } }, { new:true });
-  res.json(seat);
+// (optionnel) ping admin
+router.get('/health', requireAdmin, (_req, res) => {
+  res.json({ ok: true, scope: 'admin' });
 });
 
-router.post('/prices', requireAdmin, async (req,res)=>{ res.json(await PriceTable.create(req.body)); });
-router.get('/prices', requireAdmin, async (_req,res)=>{ res.json(await PriceTable.find({})); });
+/**
+ * Ferme la phase "renewal" pour la saison active.
+ * Réponse: { ok, seasonCode, phase }
+ */
+router.post('/renewal/close', requireAdmin, async (_req, res, next) => {
+  try {
+    const season = await Season.findOne({ active: true });
+    if (!season) return res.status(404).json({ error: 'no active season' });
+
+    if (!Array.isArray(season.phases)) season.phases = [];
+    const idx = season.phases.findIndex(p => p && p.name === 'renewal');
+    if (idx === -1) return res.status(404).json({ error: 'renewal phase not found' });
+
+    season.phases[idx].enabled = false;
+    season.markModified('phases');
+    await season.save();
+
+    res.json({ ok: true, seasonCode: season.code, phase: season.phases[idx] });
+  } catch (e) { next(e); }
+});
+
+/**
+ * Libère toutes les places "provisioned" -> "available" pour la saison active.
+ * Réponse: { ok, seasonCode, released }
+ */
+router.post('/renewal/release-provisioned', requireAdmin, async (_req, res, next) => {
+  try {
+    const season = await Season.findOne({ active: true });
+    if (!season) return res.status(404).json({ error: 'no active season' });
+
+    const r = await Seat.updateMany(
+      { seasonCode: season.code, status: 'provisioned' },
+      { $set: { status: 'available', provisionedFor: null } }
+    );
+
+    res.json({ ok: true, seasonCode: season.code, released: r.modifiedCount });
+  } catch (e) { next(e); }
+});
 
 module.exports = router;

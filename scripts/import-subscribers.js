@@ -1,20 +1,18 @@
-// scripts/import-subscribers.js
-// usage: node scripts/import-subscribers.js data/subscribers.csv 2025-2026
+
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 const fs = require('fs');
 const path = require('path');
 const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
 const Subscriber = require('../src/models/Subscriber');
+const Seat = require('../src/models/Seat');
 
 function parseCSV(text) {
-  // CSV basique: pas de virgules dans les champs, séparateur ','
   const [headerLine, ...lines] = text.split(/\r?\n/).filter(Boolean);
   const headers = headerLine.split(',').map(h => h.trim());
   return lines.map(line => {
     const cols = line.split(',').map(c => c.trim());
-    const row = {};
-    headers.forEach((h,i)=> row[h] = cols[i] || '');
+    const row = {}; headers.forEach((h,i)=> row[h] = cols[i] || '');
     return row;
   });
 }
@@ -22,15 +20,13 @@ function parseCSV(text) {
 (async () => {
   const file = process.argv[2];
   const seasonCode = process.argv[3];
-  if (!file || !seasonCode) {
-    console.error('usage: node scripts/import-subscribers.js <csv> <seasonCode>');
-    process.exit(1);
-  }
+  if (!file || !seasonCode) { console.error('usage: node scripts/import-subscribers.js <csv> <seasonCode>'); process.exit(1); }
   const uri = process.env.MONGO_URI || process.env.MONGODB_URI;
   if (!uri) throw new Error('MONGO_URI/MONGODB_URI manquant');
   if (!process.env.JWT_SECRET) throw new Error('JWT_SECRET manquant');
 
   await mongoose.connect(uri);
+
   const csv = fs.readFileSync(path.resolve(file), 'utf8');
   const rows = parseCSV(csv);
 
@@ -39,15 +35,22 @@ function parseCSV(text) {
     const doc = await Subscriber.findOneAndUpdate(
       { email: r.email },
       {
-        firstName: r.firstName,
-        lastName: r.lastName,
-        email: r.email,
-        phone: r.phone || '',
+        firstName: r.firstName, lastName: r.lastName, email: r.email, phone: r.phone || '',
         previousSeasonSeats: (r.previousSeasonSeats||'').split(';').filter(Boolean),
         status: 'invited'
       },
       { upsert: true, new: true }
     );
+
+    // Provision seats for renewal
+    for (const seatId of doc.previousSeasonSeats) {
+      await Seat.findOneAndUpdate(
+        { seatId, seasonCode },
+        { $set: { status: 'provisioned', provisionedFor: doc._id } },
+        { upsert: false }
+      ).catch(()=>{ /* seat peut ne pas exister encore */});
+    }
+
     const token = jwt.sign(
       { subscriberId: doc._id.toString(), seasonCode, phase: 'renewal' },
       process.env.JWT_SECRET,

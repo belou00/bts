@@ -1,7 +1,8 @@
+
+// src/middlewares/authz.js
 function requireAdmin(req, res, next) {
-  // Simple RBAC DEV: en PROD on passera sur un JWT Admin
-  const token = req.headers['x-admin-token'];
-  if (token && token === process.env.JWT_SECRET) return next();
-  return res.status(401).json({ error: 'admin required' });
+  const token = req.get('x-admin-token') || '';
+  if (token && process.env.JWT_SECRET && token === process.env.JWT_SECRET) return next();
+  return res.status(401).json({ error: 'admin auth required' });
 }
 module.exports = { requireAdmin };
