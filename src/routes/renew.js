@@ -23,7 +23,7 @@ function decodeTokenOrThrow(token) {
   }
 }
 
-// GET /s/renew?id=JWT   (utilisé par la page de renouvellement)
+// GET /s/renew?id=JWT&seat=A1-001   (utilisé par la page de renouvellement)
 router.get('/', async (req, res, next) => {
   try {
     const { id } = req.query;
@@ -33,21 +33,31 @@ router.get('/', async (req, res, next) => {
     const sub = await Subscriber.findById(payload.subscriberId);
     if (!sub) return res.status(404).json({ error: 'subscriber not found' });
 
-    // on renvoie les sièges liés à la saison et aux références N-1
+    // Siège préféré passé dans l’URL
+    const seatFromUrl = (req.query.seat || '').trim();
+
+    // On renvoie les sièges liés à la saison et aux références N-1
     const seats = await Seat.find(
       { seatId: { $in: sub.previousSeasonSeats }, seasonCode: payload.seasonCode },
       { seatId: 1, zoneKey: 1, status: 1, provisionedFor: 1 }
     );
 
+    // Ne pré-sélectionner que si ce siège fait bien partie du N-1 du subscriber
+    let prefSeatId = null;
+    if (seatFromUrl && sub.previousSeasonSeats.includes(seatFromUrl)) {
+      prefSeatId = seatFromUrl;
+    }
+
     res.json({
       seasonCode: payload.seasonCode,
       subscriber: { id: sub._id, firstName: sub.firstName, lastName: sub.lastName, email: sub.email },
-      seats
+      seats,
+      prefSeatId
     });
   } catch (e) { next(e); }
 });
 
-// POST /s/renew?id=JWT   (crée la commande + redirige vers Checkout)
+// POST /s/renew?id=JWT   (crée la commande + redirige vers Checkout HelloAsso)
 router.post('/', checkPhase('renewal'), async (req, res, next) => {
   try {
     const { id } = req.query;
@@ -110,7 +120,7 @@ router.post('/', checkPhase('renewal'), async (req, res, next) => {
       status: 'pendingPayment'
     });
 
-    // HOLD des sièges — autorisé si 'provisioned' pour CE subscriber (étape 5)
+    // HOLD des sièges — autorisé si 'provisioned' pour CE subscriber
     for (const it of items) {
       await holdSeat({
         seatId: it.seatId,
@@ -121,7 +131,7 @@ router.post('/', checkPhase('renewal'), async (req, res, next) => {
       });
     }
 
-    // Paiement : appel notre endpoint interne HelloAsso (gère env & OAuth2)
+    // Paiement : appel à notre endpoint interne HelloAsso (gère env & OAuth2)
     const payRes = await fetch(`${process.env.APP_URL}/api/payments/helloasso/checkout`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -142,14 +152,11 @@ router.post('/', checkPhase('renewal'), async (req, res, next) => {
 
     if (!payRes.ok) {
       const errTxt = await payRes.text().catch(() => '');
-      // on remet les sièges en 'provisioned' si le paiement n'a pas pu être initialisé
+      // Best-effort : si l'init paiement échoue, on remet le statut 'provisioned'
       for (const it of items) {
-        // best-effort : si l'hold a eu lieu, SeatHold TTL les purgera;
-        // on libère le statut pour éviter de bloquer.
         try {
           const seat = await Seat.findOne({ seatId: it.seatId, seasonCode: payload.seasonCode });
           if (seat && seat.status === 'held') {
-            // retour à provisioned pour ce subscriber
             seat.status = 'provisioned';
             seat.provisionedFor = payload.subscriberId;
             await seat.save();

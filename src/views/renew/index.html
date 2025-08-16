@@ -2,26 +2,86 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8" />
-  <title>Renouvellement Abonnement</title>
-  <link rel="stylesheet" href="/views/css/main.css" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BTS – Renouvellement d’abonnement</title>
+
+  <!-- Styles génériques du plan + spécifiques renouvellement -->
+  <link rel="stylesheet" href="/public/css/plan.css">
+  <link rel="stylesheet" href="/public/css/renew.css">
 </head>
 <body>
-  <h1>Renouvellement</h1>
-  <div id="app"></div>
-  <script>
-    const params = new URLSearchParams(location.search);
-    const id = params.get('id');
-    fetch(`/api/v1/renew?id=${encodeURIComponent(id)}`).then(r=>r.json()).then(data=>{
-      // générer le formulaire dynamiquement (sièges, tarifs, justificatifs)
-    });
+  <header class="page-header">
+    <h1>Renouvellement d’abonnement</h1>
+    <p id="sub-info" class="muted"></p>
+  </header>
 
-    async function submitForm(payload){
-      const r = await fetch(`/api/v1/renew?id=${encodeURIComponent(id)}`,{
-        method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)
-      });
-      const { checkoutUrl } = await r.json();
-      location.href = checkoutUrl;
-    }
-  </script>
+  <section class="legend">
+    <span><span class="dot dot-available"></span>Disponible</span>
+    <span><span class="dot dot-provisioned"></span>Provisionnée (pour vous)</span>
+    <span><span class="dot dot-held"></span>En cours (panier)</span>
+    <span><span class="dot dot-booked"></span>Réservée</span>
+  </section>
+
+  <main class="layout">
+    <section class="map-panel">
+      <!-- ⚠️ Idéalement, remplace ce SVG inline par ton vrai plan.
+           Si tu as un fichier /public/svg/arena.svg :
+           <object id="arena-obj" type="image/svg+xml" data="/public/svg/arena.svg"></object>
+           et dans renew.js on injectera les états après chargement de l'objet.
+           Pour l’exemple, on garde 3 “sièges” A1-001..003 :
+      -->
+      <svg id="arena-map" viewBox="0 0 400 220" aria-label="Plan de la patinoire">
+        <rect x="10" y="10" width="380" height="200" rx="8" fill="#f7f7f7" stroke="#e0e0e0"/>
+        <g>
+          <rect data-seat-id="A1-001" class="seat" x="60" y="80" width="18" height="18" rx="2"/>
+          <rect data-seat-id="A1-002" class="seat" x="100" y="80" width="18" height="18" rx="2"/>
+          <rect data-seat-id="A1-003" class="seat" x="140" y="80" width="18" height="18" rx="2"/>
+        </g>
+      </svg>
+      <p class="hint">Cliquez vos places N-1 pour les renouveler. Les places non éligibles sont bloquées.</p>
+    </section>
+
+    <aside class="side-panel">
+      <h2>Votre sélection</h2>
+      <div id="selection-list" class="selection-list empty">
+        <p class="muted">Aucune place sélectionnée.</p>
+      </div>
+
+      <form id="renew-form" class="renew-form">
+        <fieldset>
+          <legend>Coordonnées payeur</legend>
+          <div class="grid">
+            <label>Prénom
+              <input type="text" id="buyer-first" autocomplete="given-name" />
+            </label>
+            <label>Nom
+              <input type="text" id="buyer-last" autocomplete="family-name" />
+            </label>
+            <label>Email
+              <input type="email" id="buyer-email" autocomplete="email" />
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Règlement</legend>
+          <label>Nombre d’échéances
+            <select id="installments">
+              <option value="1" selected>1 fois</option>
+              <option value="2">2 fois</option>
+              <option value="3">3 fois</option>
+            </select>
+          </label>
+        </fieldset>
+
+        <div class="actions">
+          <button id="btn-submit" type="submit" disabled>Continuer au paiement</button>
+          <div id="form-msg" class="form-msg" role="status" aria-live="polite"></div>
+        </div>
+      </form>
+    </aside>
+  </main>
+
+  <script src="/views/renew/renew.js"></script>
 </body>
 </html>
