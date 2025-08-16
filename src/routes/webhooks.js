@@ -1,24 +1,56 @@
-const router = require('express').Router();
-const Order = require('../models/Order');
-const { verifyWebhookSignature } = require('../payments/helloasso');
 
-router.post('/helloasso', async (req,res,next)=>{
+const router = require('express').Router();
+const express = require('express');
+const PaymentIntent = require('../models/PaymentIntent');
+const { verifyHaSignature } = require('../services/helloasso');
+const { markOrderPaid } = require('../controllers/order');
+
+// raw body uniquement pour ce webhook
+router.post('/helloasso', express.raw({ type: 'application/json' }), async (req, res) => {
   try {
-    if (!verifyWebhookSignature(req)) return res.status(401).end();
-    const { orderNo, installmentIndex = 0, event } = req.body;
-    const order = await Order.findOne({ orderNo });
-    if (!order) return res.status(404).end();
-    const inst = order.installments.schedule[installmentIndex];
-    if (!inst) return res.status(400).end();
-    if (event==='payment.succeeded') inst.status='paid';
-    if (event==='payment.failed') inst.status='failed';
-    const states = order.installments.schedule.map(i=>i.status);
-    if (states.every(s=>s==='paid')) order.status='paid';
-    else if (states.some(s=>s==='paid')) order.status='partial';
-    else order.status='pendingPayment';
-    await order.save();
-    res.json({ ok: true });
-  } catch(e) { next(e); }
+    const signature = req.get('x-ha-signature') || '';
+    if (!verifyHaSignature(req.body, signature)) {
+      console.warn('[HA] signature invalide');
+      return res.sendStatus(400);
+    }
+
+    const event = JSON.parse(req.body.toString('utf8'));
+    const type = event?.eventType;
+    const data = event?.data || {};
+    const meta = event?.metadata || {};
+
+    if (type === 'Order') {
+      const checkoutIntentId = data?.checkoutIntentId;
+      const haOrderId = data?.id;
+
+      // tracer l'intent
+      if (checkoutIntentId) {
+        await PaymentIntent.findOneAndUpdate(
+          { checkoutIntentId },
+          { status: 'succeeded', orderId: haOrderId },
+          { upsert: false }
+        );
+      }
+
+      // finaliser la commande si on a l'orderNo en metadata
+      if (meta?.orderNo) {
+        try {
+          await markOrderPaid({ orderNo: meta.orderNo, haOrderId, checkoutIntentId });
+        } catch (e) {
+          console.error('[BTS] markOrderPaid failed:', e);
+          // on répond tout de même 200 pour éviter des retries infinis en DEV
+        }
+      }
+
+      return res.sendStatus(200);
+    }
+
+    // autres événements : OK
+    res.sendStatus(200);
+  } catch (e) {
+    console.error('[HA webhook]', e);
+    res.sendStatus(200); // éviter retries en DEV
+  }
 });
 
 module.exports = router;

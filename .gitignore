@@ -1,4 +1,5 @@
 *.log
 .env
+.env.backup
 .ha-token.json
 node_modules

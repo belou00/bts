@@ -1,7 +1,6 @@
 const router = require('express').Router();
 const Order = require('../models/Order');
 const { splitInstallments } = require('../utils/money');
-const { createCheckout } = require('../payments/helloasso');
 const { orderNo } = require('../utils/ids');
 const { getPriceFor } = require('../services/pricing');
 const { holdSeat } = require('../controllers/seat');
@@ -47,13 +46,34 @@ router.post('/checkout', checkPhase('public'), async (req,res,next)=>{
       if (it.kind === 'SEAT') await holdSeat({ seatId: it.seatId, orderId: order._id, ttlMinutes: 10 });
     }
 
-    const { checkoutUrl, checkoutSessionId } = await createCheckout({
-      order, returnUrl:`${process.env.APP_URL}/return/${order.orderNo}`, cancelUrl:`${process.env.APP_URL}/cancel/${order.orderNo}`
-    });
-    order.helloAsso = { checkoutSessionId };
-    await order.save();
+	const payRes = await fetch(`${process.env.APP_URL}/api/payments/helloasso/checkout`, {
+	  method: 'POST',
+	  headers: { 'Content-Type': 'application/json' },
+	  body: JSON.stringify({
+		orderNo: order.orderNo,
+		subscriberId: payload.subscriberId || null,
+		seasonCode: order.seasonCode,
+		totalCents: order.totals.totalCents,
+		itemName: 'Abonnement',
+		installments: installmentsCount,
+		payer: {
+		  email: buyer?.email,
+		  firstName: buyer?.firstName,
+		  lastName:  buyer?.lastName
+		}
+	  })
+	});
+	if (!payRes.ok) {
+	  const err = await payRes.text();
+	  throw new Error(`checkout failed: ${err}`);
+	}
+	const { redirectUrl, checkoutIntentId } = await payRes.json();
 
-    res.json({ checkoutUrl });
+	order.helloAsso = { checkoutIntentId };
+	await order.save();
+
+	return res.json({ checkoutUrl: redirectUrl });
+
   }catch(e){ next(e); }
 });
 

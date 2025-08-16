@@ -1,3 +1,4 @@
+
 const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
@@ -19,14 +20,17 @@ function buildApp() {
 
   app.get('/api/v1/health', (_req, res) => res.json({ ok: true, name: 'BTS', version: '0.1-DEV' }));
 
-  // assets statiques
+  // Static
   app.use('/public', express.static(path.join(__dirname, '..', 'public')));
   app.use('/views', express.static(path.join(__dirname, '..', 'views')));
 
-  // routes API
+  // ↓ NEW: route Paiements (HelloAsso Checkout)
+  app.use('/api/payments', require('../routes/payments'));
+
+  // Routes “v1”
   app.use('/api/v1', routes);
 
-  // entrées HTML simples (DEV)
+  // HTML demo
   app.get('/s/renew', (_req,res)=> res.sendFile(path.join(__dirname, '..', 'views', 'renew', 'index.html')));
   app.get('/s/tbh7', (_req,res)=> res.sendFile(path.join(__dirname, '..', 'views', 'tbh7', 'index.html')));
   app.get('/s/public', (_req,res)=> res.sendFile(path.join(__dirname, '..', 'views', 'public', 'index.html')));
@@ -39,3 +43,4 @@ function buildApp() {
 }
 
 module.exports = { buildApp };
+

@@ -14,7 +14,8 @@
     "import:subs": "node scripts/import-subscribers.js data/subscribers.csv 2025-2026",
     "migrate:sub-index": "node scripts/migrate-subscriber-index.js",
     "test": "jest --runInBand",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "migrate:seathold-index": "node scripts/migrate-seathold-index.js"
   },
   "dependencies": {
     "celebrate": "^15.0.3",
@@ -39,4 +40,3 @@
     "supertest": "^6.3.4"
   }
 }
-
