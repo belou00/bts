@@ -8,16 +8,17 @@
     "node": ">=20"
   },
   "scripts": {
-    "dev": "nodemon src/server.js",
-    "start": "node src/server.js",
+    "dev": "APP_ENV=development nodemon src/server.js",
+    "start:int": "APP_ENV=integration node src/server.js",
+    "start:prod": "APP_ENV=production node src/server.js",
     "seed": "node scripts/seed-dev.js",
+    "test": "jest --runInBand",
+    "lint": "eslint .",
     "import:subs": "node scripts/import-subscribers.js data/subscribers.csv 2025-2026",
     "import:subs:flat": "node scripts/import-subscribers-flat.js data/subscribers_flat.csv 2025-2026 --venue=patinoire-blagnac --pad3 --verbose",
     "export:renew:dev": "node scripts/export-renew-seats.js 2025-2026 --base=http://localhost:8080 --out=renew-seats-dev.csv",
     "export:renew:prod": "node scripts/export-renew-seats.js 2025-2026 --base=https://billetterie.belougas.fr/bts --out=renew-seats.csv",
     "audit:missing-seats": "node scripts/audit-missing-seats.js 2025-2026 patinoire-blagnac --out=missing-seats.csv --grouped=missing-by-email.csv",
-    "test": "jest --runInBand",
-    "lint": "eslint .",
     "migrate:sub-index": "node scripts/migrate-subscriber-index.js",
     "migrate:seathold-index": "node scripts/migrate-seathold-index.js"
   },

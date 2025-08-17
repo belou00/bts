@@ -1,27 +1,24 @@
 // src/loaders/mongo.js
 const mongoose = require('mongoose');
 
-module.exports = async function connectMongo(uri) {
-  if (!uri) {
-    throw new Error('Missing MongoDB URI (MONGO_URI ou MONGODB_URI)');
+function pickMongoUri() {
+  const env = (process.env.APP_ENV || process.env.NODE_ENV || 'development').toLowerCase();
+  if (env === 'production') {
+    return process.env.MONGO_URI_PROD || process.env.MONGO_URI || process.env.MONGODB_URI;
   }
+  if (env === 'integration' || env === 'int' || env === 'staging' || env === 'preprod') {
+    return process.env.MONGO_URI_DEV || process.env.MONGO_URI || process.env.MONGODB_URI;
+  }
+  // development (local)
+  return process.env.MONGO_URI || process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/bts_dev';
+}
 
-  // Réglages recommandés
+async function connectMongo() {
+  const uri = pickMongoUri();
+  if (!uri) throw new Error('Mongo URI not provided');
   mongoose.set('strictQuery', true);
+  await mongoose.connect(uri, { autoIndex: true, maxPoolSize: 10 });
+  console.log(`[BTS] Mongo connected → db="${mongoose.connection.name}"`);
+}
 
-  // Connexion
-  await mongoose.connect(uri, {
-    // options par défaut OK avec Mongoose 8 / MongoDB 6+
-    // serverSelectionTimeoutMS: 10000,
-  });
-
-  // Logs utiles (optionnel)
-  mongoose.connection.on('error', (err) => {
-    console.error('[Mongo] connection error:', err);
-  });
-  mongoose.connection.on('disconnected', () => {
-    console.warn('[Mongo] disconnected');
-  });
-
-  return mongoose.connection;
-};
+module.exports = connectMongo;
