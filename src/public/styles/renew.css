@@ -1,0 +1,76 @@
+:root {
+  --bg:#fafafa; --card:#fff; --muted:#666; --ok:#0a7f3f; --warn:#b26b00; --err:#b00020; --br:#eee;
+}
+
+* { box-sizing:border-box; }
+html,body { margin:0; padding:0; background:var(--bg); color:#111; font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; }
+
+header { padding:16px 24px; border-bottom:1px solid var(--br); background:#fff; position:sticky; top:0; z-index:10; }
+header h1 { margin:0 0 6px; font-size:20px; }
+header .sub { color:var(--muted); font-size:14px; }
+
+main { padding:24px; max-width:1200px; margin:0 auto; }
+.grid { display:grid; grid-template-columns:1.2fr .8fr; gap:24px; }
+
+.card { background:var(--card); border:1px solid var(--br); border-radius:10px; padding:16px; }
+.card h3 { margin:0 0 12px; font-size:18px; }
+
+object#venuePlan { width:100%; height:72vh; border:1px solid var(--br); border-radius:8px; background:#fff; }
+
+/* liste des sièges */
+.list { display:flex; flex-direction:column; gap:8px; }
+.row { display:grid; grid-template-columns: 24px 1fr 140px 1fr; gap:10px; align-items:center; padding:8px; border:1px solid var(--br); border-radius:8px; background:#fff; }
+.row.missing { opacity:.6; }
+.seatId { font-weight:600; }
+.status { font-size:12px; padding:2px 8px; border-radius:999px; border:1px solid var(--br); display:inline-block; }
+.status.ok { background:#e8fff0; border-color:#b8f0c2; color:#0a5c2e; }
+.status.warn { background:#fff3cd; border-color:#ffe08a; color:#7a5a00; }
+.status.err { background:#fde2e2; border-color:#f5b5b5; color:#8a0015; }
+
+.empty { padding:8px 10px; background:#fff8e1; border:1px solid #ffe08a; color:#664d00; border-radius:6px; display:inline-block; }
+
+.tariff, .justif, .payer, .controls { margin-top:12px; }
+select, input[type="text"], input[type="email"], textarea { width:100%; padding:8px 10px; border:1px solid var(--br); border-radius:6px; font:inherit; }
+textarea { min-height:60px; }
+.flex { display:flex; gap:12px; }
+.flex > div { flex:1; }
+
+.btnbar { display:flex; gap:12px; justify-content:flex-end; margin-top:16px; }
+button { appearance:none; border:1px solid #d0d0d0; background:#111; color:#fff; padding:10px 14px; border-radius:8px; font-weight:600; cursor:pointer; }
+button.secondary { background:#fff; color:#111; }
+
+.msg { margin-top:10px; font-size:14px; }
+.msg.ok { color:var(--ok); }
+.msg.err { color:var(--err); }
+.muted { color:var(--muted); font-size:13px; }
+
+@media (max-width:980px) {
+  .grid { grid-template-columns:1fr; }
+  object#venuePlan { height:50vh; }
+  .row { grid-template-columns: 24px 1fr; grid-template-rows:auto auto auto; }
+  .row .tariffCell, .row .justifCell { grid-column: 1 / -1; }
+}
+
+/* === Highlight dans le SVG embarqué === */
+@keyframes bts-pulse {
+  0% { filter: drop-shadow(0 0 0 rgba(70,130,255,.0)); }
+  50% { filter: drop-shadow(0 0 6px rgba(70,130,255,.65)); }
+  100% { filter: drop-shadow(0 0 0 rgba(70,130,255,.0)); }
+}
+
+/* La classe est injectée DANS l'arbre SVG via element.classList.add('bts-hl') */
+.bts-hl {
+  stroke: #4ea0ff !important;
+  stroke-width: 2 !important;
+  fill: rgba(78,160,255,.18) !important;
+  vector-effect: non-scaling-stroke;
+  animation: bts-pulse 1.8s infinite;
+}
+
+/* Hover léger (appliqué/retiré au survol de la ligne) */
+.bts-hl-hover {
+  stroke: #4ea0ff !important;
+  stroke-width: 2 !important;
+  fill: rgba(78,160,255,.12) !important;
+  vector-effect: non-scaling-stroke;
+}

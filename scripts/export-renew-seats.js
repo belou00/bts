@@ -1,108 +1,75 @@
 // scripts/export-renew-seats.js
-// 1 ligne = 1 place (pour publipostage / renouvellement)
-// Colonnes: group,email,firstName,lastName,seatId,seatStatus,renewUrl
 // Usage:
-//   node scripts/export-renew-seats.js <seasonCode> [--all-prev] [--group=subscriberId|email]
-//
-// Par défaut: ne liste que (provisioned pour ce subscriber) + (held).
-// --all-prev : liste toutes les places N-1 (même booked/available) avec statut informatif.
-// group = email par défaut ; --group=subscriberId possible.
-
+//   node scripts/export-renew-seats.js <seasonCode> [--base=http://localhost:8080] [--expires=30d] [--out=renew-seats.csv] [--sort=group|email] [--email=...] [--group=...]
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
-const mongoose = require('mongoose');
+const fs = require('fs');
+const path = require('path');
 const jwt = require('jsonwebtoken');
+const mongoose = require('mongoose');
 const Subscriber = require('../src/models/Subscriber');
-const Seat = require('../src/models/Seat');
 
-function csvEscape(v) {
+const csvEsc = (v) => {
   const s = String(v == null ? '' : v);
-  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-  return s;
-}
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+const arg = (name, def=null) => {
+  const a = process.argv.find(x => x.startsWith(`--${name}=`));
+  return a ? a.split('=')[1] : def;
+};
 
-(async () => {
-  const [seasonCode, ...flags] = process.argv.slice(2);
-  if (!seasonCode) {
-    console.error('Usage: node scripts/export-renew-seats.js <seasonCode> [--all-prev] [--group=subscriberId|email]');
-    process.exit(1);
-  }
-  const listAllPrev = flags.includes('--all-prev');
-  const groupArg = (flags.find(f => f.startsWith('--group=')) || '--group=email').split('=')[1];
-  const groupMode = ['subscriberId', 'email'].includes(groupArg) ? groupArg : 'email';
+(async()=>{
+  const seasonCode = process.argv[2];
+  if (!seasonCode) { console.error('Usage: node scripts/export-renew-seats.js <seasonCode> [--base=...] [--expires=30d] [--out=renew-seats.csv] [--sort=group|email] [--email=...] [--group=...]'); process.exit(1); }
+  const base = arg('base', process.env.APP_URL || 'http://localhost:8080');
+  const expiresIn = arg('expires', '30d');
+  const out = arg('out', 'renew-seats.csv');
+  const sortKey = arg('sort', 'group'); // group|email
+  const filterEmail = arg('email', null);
+  const filterGroup = arg('group', null);
 
-  const appUrl    = (process.env.APP_URL || 'http://localhost:8080').replace(/\/+$/,'');
+  const mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI;
   const jwtSecret = process.env.JWT_SECRET;
-  const mongoUri  = process.env.MONGO_URI || process.env.MONGODB_URI;
-
-  if (!mongoUri) { console.error('ERROR: MONGO_URI/MONGODB_URI manquant'); process.exit(1); }
-  if (!jwtSecret){ console.error('ERROR: JWT_SECRET manquant');         process.exit(1); }
+  if (!mongoUri || !jwtSecret) { console.error('Missing MONGO_URI/JWT_SECRET'); process.exit(1); }
 
   await mongoose.connect(mongoUri);
 
-  process.stdout.write('group,email,firstName,lastName,seatId,seatStatus,renewUrl\n');
+  const q = { previousSeasonSeats: { $exists: true, $ne: [] } };
+  if (filterEmail) q.email = filterEmail;
+  if (filterGroup) q.groupKey = filterGroup;
 
-  let totalSubs=0, rows=0, skippedNoEmail=0;
+  const subs = await Subscriber.find(
+    q,
+    { firstName:1, lastName:1, email:1, groupKey:1, previousSeasonSeats:1 }
+  ).lean();
 
-  const cursor = Subscriber.find({
-    previousSeasonSeats: { $exists: true, $ne: [] }
-  }).cursor();
-
-  for await (const sub of cursor) {
-    totalSubs++;
-    const email = sub.email || '';
-    if (!email) { skippedNoEmail++; continue; }
-
-    const prevSeats = Array.isArray(sub.previousSeasonSeats) ? sub.previousSeasonSeats : [];
-    if (prevSeats.length === 0) continue;
-
-    // État des places N-1 pour la saison cible
-    const seasonSeats = await Seat.find(
-      { seasonCode, seatId: { $in: prevSeats } },
-      { seatId: 1, status: 1, provisionedFor: 1 }
-    ).lean();
-
-    const byId = new Map(seasonSeats.map(s => [s.seatId, s]));
-
-    // JWT d’accès à la page de renouvellement (30j)
-    const token = jwt.sign(
-      { subscriberId: sub._id.toString(), seasonCode, phase: 'renewal' },
-      jwtSecret,
-      { expiresIn: '30d' }
-    );
-
-    const groupVal = groupMode === 'subscriberId' ? String(sub._id) : email;
-
-    for (const seatId of prevSeats) {
-      const rec = byId.get(seatId);
-      const status = rec?.status || 'unknown';
-      const isOwnedProvision =
-        rec && rec.status === 'provisioned' && String(rec.provisionedFor || '') === String(sub._id);
-      const isHeld = rec && rec.status === 'held';
-
-      // Par défaut: on n’exporte que les places réellement renouvelables
-      if (!listAllPrev && !(isOwnedProvision || isHeld)) continue;
-
-      const renewUrl = `${appUrl}/s/renew?id=${encodeURIComponent(token)}&seat=${encodeURIComponent(seatId)}`;
-
-      const row = [
-        csvEscape(groupVal),
-        csvEscape(email),
-        csvEscape(sub.firstName || ''),
-        csvEscape(sub.lastName  || ''),
-        csvEscape(seatId),
-        csvEscape(status),
-        csvEscape(renewUrl)
-      ].join(',') + '\n';
-
-      process.stdout.write(row);
-      rows++;
+  let rows = [];
+  for (const s of subs) {
+    const token = jwt.sign({ subscriberId: s._id.toString(), seasonCode, phase: 'renewal' }, jwtSecret, { expiresIn });
+    for (const seatId of s.previousSeasonSeats) {
+      const renewUrl = `${base.replace(/\/$/,'')}/s/renew?id=${encodeURIComponent(token)}&seat=${encodeURIComponent(seatId)}`;
+      rows.push({
+        group: s.groupKey || s.email,
+        email: s.email,
+        firstName: s.firstName || '',
+        lastName: s.lastName || '',
+        seatId,
+        renewUrl
+      });
     }
   }
 
+  rows.sort((a,b) => {
+    if (sortKey === 'email') return a.email.localeCompare(b.email) || a.seatId.localeCompare(b.seatId);
+    return (a.group || '').localeCompare(b.group || '') ||
+           a.email.localeCompare(b.email) ||
+           a.seatId.localeCompare(b.seatId);
+  });
+
+  const header = 'group,email,firstName,lastName,seatId,renewUrl\n';
+  const body = rows.map(r => [r.group, r.email, r.firstName, r.lastName, r.seatId, r.renewUrl].map(csvEsc).join(',')).join('\n') + '\n';
+  const outPath = path.resolve(out);
+  fs.writeFileSync(outPath, header + body, 'utf8');
+  console.log(`Wrote ${outPath} (${rows.length} rows) using base=${base}`);
   await mongoose.disconnect();
-  console.error(`Done. subscribers=${totalSubs}, rows=${rows}, skippedNoEmail=${skippedNoEmail}`);
-})().catch(async (e) => {
-  console.error(e);
-  try { await mongoose.disconnect(); } catch {}
-  process.exit(1);
-});
+})();
+

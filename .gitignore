@@ -1,5 +1,7 @@
 *.log
+*.csv
+*.svg
 .env
-.env.backup
+.env.*
 .ha-token.json
 node_modules
