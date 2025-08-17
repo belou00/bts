@@ -21,5 +21,7 @@ safeMount('./admin-tariff-catalog');  // <=== catalogue des tarifs
 safeMount('./payments');
 safeMount('./public');
 safeMount('./admin-email');
+safeMount('./payments-helloasso'); // ← checkout
+safeMount('./ha');                 // ← return/back/error
 
 module.exports = router;
