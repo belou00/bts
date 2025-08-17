@@ -1,282 +1,427 @@
 <!doctype html>
 <html lang="fr">
 <head>
-  <meta charset="utf-8">
-  <title>Renouvellement – Belougas Ticketing System</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <!-- chemin relatif pour marcher avec /bts/s/renew → /bts/styles/renew.css -->
-  <link rel="stylesheet" href="../styles/renew.css">
+  <meta charset="utf-8" />
+  <title>BTS · Renouvellement d’abonnement</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Le href est défini dynamiquement pour supporter le préfixe /bts en INT/PROD -->
+  <link id="renew-css" rel="stylesheet" href="">
 </head>
 <body>
-  <header>
+<header class="brandbar">
+  <img id="club-logo" alt="Belougas" />
+  <div class="titles">
     <h1>Renouvellement d’abonnement</h1>
-    <div class="sub" id="headerSub">Chargement…</div>
-  </header>
+    <p id="seasonVenue" class="muted"></p>
+  </div>
+</header>
 
-  <main>
-    <div class="grid">
-      <section class="card">
-        <h3>Plan du lieu</h3>
-        <div id="planWrap">
-          <p id="noPlan" class="empty">Plan indisponible pour cette saison.</p>
-          <object id="venuePlan" type="image/svg+xml" data="" hidden></object>
-        </div>
-      </section>
+<main class="container">
+  <div id="alert" class="alert" hidden></div>
 
-      <section class="card">
-        <h3>Vos sièges (groupe)</h3>
-        <div id="seatsList" class="list"></div>
-
-        <div class="tariff">
-          <div class="flex">
-            <div>
-              <label for="installments">Paiement en</label>
-              <select id="installments">
-                <option value="1">1 fois</option>
-                <option value="2">2 fois</option>
-                <option value="3">3 fois</option>
-              </select>
-            </div>
-            <div>
-              <label for="payerEmail">Email du payeur</label>
-              <input id="payerEmail" type="email" placeholder="prenom.nom@example.com" autocomplete="email">
-            </div>
-          </div>
-          <p class="muted">Les tarifs se choisissent <em>par siège</em>. Une justification peut être demandée pour les tarifs réduits.</p>
-        </div>
-
-        <div class="btnbar">
-          <button class="secondary" id="btnRefresh">Rafraîchir</button>
-          <button id="btnCheckout">Payer via HelloAsso</button>
-        </div>
-        <div id="msg" class="msg"></div>
-      </section>
-    </div>
-  </main>
-
-<script>
-(async function(){
-  const $ = (sel, el=document) => el.querySelector(sel);
-  const ui = {
-    headerSub: $('#headerSub'),
-    plan: $('#venuePlan'),
-    noPlan: $('#noPlan'),
-    list: $('#seatsList'),
-    msg: $('#msg'),
-    installments: $('#installments'),
-    payerEmail: $('#payerEmail'),
-    btnCheckout: $('#btnCheckout'),
-    btnRefresh: $('#btnRefresh')
-  };
-  const pageUrl = new URL(window.location.href);
-
-  async function loadData() {
-    const r = await fetch(pageUrl.toString(), { headers: { 'Accept': 'application/json' } });
-    if (!r.ok) {
-      const t = await r.text().catch(()=> '');
-      throw new Error(`Erreur ${r.status}: ${t.slice(0,200)}`);
-    }
-    return r.json();
-  }
-
-  // ==== HIGHLIGHT DANS LE SVG ====
-  let svgDoc = null;
-  function getSvgDoc() {
-    try { return ui.plan.contentDocument || ui.plan.getSVGDocument?.() || null; }
-    catch { return null; }
-  }
-  // Injecte les styles .bts-hl dans le document SVG (indispensable)
-  function injectSvgStyles() {
-    if (!svgDoc) return;
-    const id = 'bts-svg-style';
-    if (svgDoc.getElementById(id)) return;
-    const css = `
-@keyframes bts-pulse {
-  0% { filter: drop-shadow(0 0 0 rgba(70,130,255,.0)); }
-  50% { filter: drop-shadow(0 0 6px rgba(70,130,255,.65)); }
-  100% { filter: drop-shadow(0 0 0 rgba(70,130,255,.0)); }
-}
-.bts-hl {
-  stroke:#4ea0ff !important;
-  stroke-width:2 !important;
-  fill:rgba(78,160,255,.18) !important;
-  vector-effect:non-scaling-stroke;
-  animation:bts-pulse 1.8s infinite;
-}
-.bts-hl-hover {
-  stroke:#4ea0ff !important;
-  stroke-width:2 !important;
-  fill:rgba(78,160,255,.12) !important;
-  vector-effect:non-scaling-stroke;
-}`;
-    const style = svgDoc.createElementNS('http://www.w3.org/2000/svg','style');
-    style.setAttribute('id', id);
-    style.textContent = css;
-    (svgDoc.querySelector('svg') || svgDoc).appendChild(style);
-  }
-
-  function seatSelectors(seatId) {
-    const sid = String(seatId || '').trim();
-    if (!sid) return [];
-    return [
-      `#${CSS.escape(sid)}`,
-      `[data-seat-id="${sid}"]`,
-      `[data-id="${sid}"]`
-    ];
-  }
-  function findSeatElements(seatId) {
-    if (!svgDoc) return [];
-    const sels = seatSelectors(seatId);
-    for (const s of sels) {
-      const n = [...svgDoc.querySelectorAll(s)];
-      if (n.length) return n;
-    }
-    return [];
-  }
-  function highlightSeat(seatId, on=true, hover=false) {
-    const list = findSeatElements(seatId);
-    for (const el of list) {
-      el.classList.toggle('bts-hl', on && !hover);
-      el.classList.toggle('bts-hl-hover', on && hover);
-    }
-  }
-
-  function seatRowTpl(s, idx) {
-    const disabled = !s.exists || s.status === 'missing' || s.status === 'booked';
-    const checked = s.provisioned && !disabled;
-    const statusHtml = !s.exists
-      ? '<span class="status err">Inexistant (saison)</span>'
-      : (s.status === 'provisioned'
-          ? '<span class="status ok">Provisionné</span>'
-          : s.status === 'available'
-            ? '<span class="status">Disponible</span>'
-            : `<span class="status warn">${s.status}</span>`);
-    const tariffId = `tariff_${idx}`;
-    const justId = `just_${idx}`;
-    const cbId = `cb_${idx}`;
-    return `
-      <div class="row ${!s.exists?'missing':''}" data-seat="${s.seatId}">
-        <div>
-          <input type="checkbox" id="${cbId}" ${checked && !disabled ? 'checked':''} ${disabled?'disabled':''} />
-        </div>
-        <div>
-          <div class="seatId">${s.seatId}</div>
-          <div class="muted">${s.ownerEmail ? ('Titulaire N-1: '+s.ownerEmail) : ''} ${statusHtml}</div>
-        </div>
-        <div class="tariffCell">
-          <label class="muted" for="${tariffId}">Tarif</label>
-          <select id="${tariffId}" ${disabled?'disabled':''}>
-            <option value="ADULT">Adulte</option>
-            <option value="TEEN_12_18">12–18 ans</option>
-            <option value="CHILD">Enfant</option>
-            <option value="REDUCED">Réduit</option>
-          </select>
-        </div>
-        <div class="justifCell">
-          <label class="muted" for="${justId}">Justification (si réduit)</label>
-          <input type="text" id="${justId}" placeholder="ex: justificatif étudiant, etc." ${disabled?'disabled':''} />
+  <section class="layout">
+    <div class="plan-card">
+      <div class="card-head">
+        <h2>Votre plan</h2>
+        <span id="planStatus" class="badge muted">Chargement…</span>
+      </div>
+      <div id="planWrap" class="plan-wrap">
+        <!-- SVG chargé via <object> pour accéder au DOM interne -->
+        <object id="venuePlan" type="image/svg+xml" data="" class="venue-plan" aria-label="Plan de la patinoire"></object>
+        <div id="planFallback" class="plan-fallback" hidden>
+          <p><strong>Plan indisponible pour cette saison.</strong></p>
+          <p>Réessayez plus tard ou contactez le club.</p>
         </div>
       </div>
-    `;
+      <p class="help">Astuce : vos sièges à renouveler sont <span class="chip gold">surlignés en or</span> sur le plan.</p>
+    </div>
+
+    <div class="form-card">
+      <div class="card-head">
+        <h2>Votre renouvellement</h2>
+        <span id="groupInfo" class="badge"></span>
+      </div>
+
+      <div id="linesWrap" class="lines-wrap">
+        <!-- Table des lignes générée en JS -->
+        <table class="lines-table" id="linesTable">
+          <thead>
+            <tr>
+              <th>Siège</th>
+              <th>Zone</th>
+              <th>Tarif</th>
+              <th>Prix</th>
+              <th>Justification</th>
+            </tr>
+          </thead>
+          <tbody id="linesTbody">
+            <!-- rows dynamiques -->
+          </tbody>
+        </table>
+        <div id="emptyMsg" class="muted" hidden>Aucune place à renouveler trouvée pour ce lien.</div>
+      </div>
+
+      <div class="totals">
+        <div class="installments">
+          <label for="installments">Règlement :</label>
+          <select id="installments">
+            <option value="1">1 fois</option>
+            <option value="2">2 fois</option>
+            <option value="3">3 fois</option>
+          </select>
+        </div>
+        <div class="sum">
+          <span>Total</span>
+          <strong id="totalEuros">—</strong>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="btnPay" class="btn primary" disabled>Payer</button>
+      </div>
+
+      <p id="phaseNote" class="muted small" hidden></p>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <p class="muted small">Besoin d’aide ? Contactez <a href="mailto:billetterie@tbhc.fr">billetterie@tbhc.fr</a></p>
+</footer>
+
+<script>
+(() => {
+  // ---------- Base path (support /bts en INT/PROD) ----------
+  const idx = location.pathname.indexOf('/s/renew');
+  const basePath = idx > 0 ? location.pathname.slice(0, idx) : '';
+  document.getElementById('renew-css').href = basePath + '/static/css/renew.css';
+  const logoEl = document.getElementById('club-logo');
+  if (logoEl) logoEl.src = basePath + '/static/img/logo.png';
+
+  // ---------- Helpers ----------
+  const $ = sel => document.querySelector(sel);
+  const $$ = sel => Array.from(document.querySelectorAll(sel));
+  const fmtEuros = cents => (cents/100).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
+  const qs = new URLSearchParams(location.search);
+  const token = qs.get('id'); // lien personnalisé
+
+  function showAlert(html, kind='error') {
+    const box = $('#alert');
+    box.className = 'alert ' + kind;
+    box.innerHTML = html;
+    box.hidden = false;
   }
+  function hideAlert(){ const box=$('#alert'); box.hidden=true; }
 
-  function gatherLines(container) {
-    const rows = [...container.querySelectorAll('.row')];
-    const out = [];
-    rows.forEach((row, i) => {
-      const seatId = row.getAttribute('data-seat');
-      const checked = row.querySelector(`#cb_${i}`)?.checked;
-      const tariff = row.querySelector(`#tariff_${i}`)?.value || 'ADULT';
-      const just   = row.querySelector(`#just_${i}`)?.value?.trim() || '';
-      if (checked) out.push({ seatId, tariffCode: tariff, justification: just });
-    });
-    return out;
-  }
-  function setMsg(text, ok=false) {
-    ui.msg.textContent = text;
-    ui.msg.className = 'msg ' + (ok ? 'ok' : 'err');
-  }
+  // ---------- État ----------
+  let DATA = null;        // payload /s/renew (JSON)
+  let PLAN = null;        // contentDocument du SVG
+  let PRICES = {};        // { zoneKey: { tariffCode: priceCents } }
+  let TARIFFS = [];       // [{code,label,requiresField,fieldLabel,requiresInfo,active,sortOrder}]
+  let LINES = [];         // [{seatId, zoneKey, tariffCode, field, info}]
 
-  try {
-    const data = await loadData();
-    if (data.error) throw new Error(data.error);
-
-    ui.headerSub.textContent = `Saison ${data.seasonCode} — Groupe ${data.groupKey}`;
-
-    if (data.venuePlanUrl) {
-      ui.plan.data = data.venuePlanUrl;
-      ui.plan.hidden = false;
-      ui.noPlan?.remove();
-      ui.plan.addEventListener('load', () => {
-        svgDoc = getSvgDoc();
-        if (!svgDoc) return;
-        injectSvgStyles(); // <<<<<< INJECTION CSS DANS LE SVG
-
-        // Highlight initial: sièges provisionnés cochés
-        const rows = [...ui.list.querySelectorAll('.row input[type="checkbox"]:checked')].map(cb => cb.closest('.row'));
-        rows.forEach(r => highlightSeat(r.getAttribute('data-seat'), true, false));
-        // Focus éventuel
-        if (data.prefSeatId) highlightSeat(data.prefSeatId, true, false);
-      }, { once:true });
+  // ---------- Fetch des données du renouvellement ----------
+  async function loadData() {
+    if (!token) {
+      showAlert("Lien invalide : identifiant manquant.");
+      return;
     }
-
-    if (Array.isArray(data.members) && data.members.length) {
-      ui.payerEmail.value = data.members[0].email || '';
+    const url = location.pathname + location.search; // /s/renew?id=...
+    const res = await fetch(url, { headers: { 'Accept':'application/json' }});
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(`${res.status} ${txt}`);
     }
-
-    if (!data.seats || !data.seats.length) {
-      ui.list.innerHTML = '<p class="empty">Aucun siège lié à ce groupe pour cette saison.</p>';
+    DATA = await res.json();
+    // On attend un JSON contenant (au minimum) :
+    // { seasonCode, seasonName?, venueSlug, venuePlanUrl, phase, groupKey?, groupEmail?, seats: [{seatId, zoneKey, provisioned:true}], tariffs:[...], prices:{zoneKey:{tariffCode:cents}} }
+    if (!DATA || !Array.isArray(DATA.seats)) {
+      throw new Error('Réponse inattendue du serveur.');
+    }
+    TARIFFS = (DATA.tariffs || []).filter(t => t.active !== false)
+                                  .sort((a,b) => (a.sortOrder??100)-(b.sortOrder??100));
+    PRICES = DATA.prices || {};
+    $('#seasonVenue').textContent = (DATA.seasonCode ? `Saison ${DATA.seasonCode}` : '') +
+                                    (DATA.venueSlug ? ` • ${DATA.venueSlug}` : '');
+    if (DATA.groupEmail || DATA.groupKey) {
+      $('#groupInfo').textContent = DATA.groupEmail ? DATA.groupEmail : DATA.groupKey;
+      $('#groupInfo').classList.add('muted');
     } else {
-      ui.list.innerHTML = data.seats.map((s, idx) => seatRowTpl(s, idx)).join('');
+      $('#groupInfo').hidden = true;
+    }
+    if (DATA.phase && DATA.phase.status) {
+      $('#phaseNote').hidden = false;
+      $('#phaseNote').textContent = `Phase "${DATA.phase.name || 'renewal'}" : ${DATA.phase.status}`;
+    }
 
-      // Interactions: hover/click → highlight
-      [...ui.list.querySelectorAll('.row')].forEach((row, i) => {
-        const sid = row.getAttribute('data-seat');
-        const cb = row.querySelector(`#cb_${i}`);
-        row.addEventListener('mouseenter', () => highlightSeat(sid, true, true));
-        row.addEventListener('mouseleave', () => highlightSeat(sid, false, true));
-        if (cb) cb.addEventListener('change', () => highlightSeat(sid, cb.checked, false));
-      });
+    // Prépare les lignes (tarif par défaut = premier du catalogue avec un prix sur la zone)
+    LINES = DATA.seats.map(seat => {
+      const zone = seat.zoneKey || '';
+      const availableTariffs = TARIFFS.filter(t => PRICES[zone]?.[t.code] != null);
+      const defaultTariff = seat.defaultTariffCode || availableTariffs[0]?.code || null;
+      return {
+        seatId: seat.seatId,
+        zoneKey: zone,
+        tariffCode: defaultTariff,
+        field: '', // e.g. n° de licence / INE
+        info: ''   // e.g. "Carte étudiant à présenter"
+      };
+    });
 
-      if (data.prefSeatId) {
-        const el = ui.list.querySelector(`.row[data-seat="${CSS.escape(data.prefSeatId)}"]`);
-        if (el) { el.style.outline = '2px solid #4ea0ff'; el.scrollIntoView({ behavior:'smooth', block:'center' }); }
+    if (!LINES.length) {
+      $('#emptyMsg').hidden = false;
+      $('#btnPay').disabled = true;
+    }
+
+    // Charge le plan
+    setPlanUrl(DATA.venuePlanUrl);
+    // Construit la table
+    renderTable();
+    updateTotal();
+  }
+
+  // ---------- Plan SVG ----------
+  function setPlanUrl(url) {
+    const planStatus = $('#planStatus');
+    const obj = $('#venuePlan');
+    const fallback = $('#planFallback');
+    if (!url) {
+      obj.removeAttribute('data');
+      fallback.hidden = false;
+      planStatus.textContent = 'Indisponible';
+      planStatus.classList.remove('muted');
+      planStatus.classList.add('danger');
+      return;
+    }
+    // Préfixe avec basePath si url commence par /
+    const finalUrl = url.startsWith('/') ? (basePath + url) : url;
+    obj.data = finalUrl;
+    planStatus.textContent = 'Chargement…';
+    planStatus.classList.add('muted');
+    obj.addEventListener('load', () => {
+      try {
+        PLAN = obj.contentDocument;
+        planStatus.textContent = 'OK';
+        planStatus.classList.remove('muted','danger');
+        planStatus.classList.add('ok');
+        highlightSeats();
+      } catch (e) {
+        fallback.hidden = false;
+        planStatus.textContent = 'Indisponible';
+        planStatus.classList.remove('muted');
+        planStatus.classList.add('danger');
+      }
+    }, { once:true });
+    obj.addEventListener('error', () => {
+      fallback.hidden = false;
+      planStatus.textContent = 'Indisponible';
+      planStatus.classList.remove('muted');
+      planStatus.classList.add('danger');
+    }, { once:true });
+  }
+
+  function highlightSeats() {
+    if (!PLAN) return;
+    // Ajoute un style <style> dans le SVG si besoin
+    const svg = PLAN.querySelector('svg');
+    if (svg && !PLAN.getElementById('bts-highlight-style')) {
+      const st = PLAN.createElementNS('http://www.w3.org/2000/svg', 'style');
+      st.id = 'bts-highlight-style';
+      st.textContent = `
+        .bts-hl { fill: #ffd54a !important; stroke: #b58900 !important; stroke-width: 1.2 !important; }
+        .bts-hl text { fill: #000 !important; font-weight: 700; }
+      `;
+      svg.appendChild(st);
+    }
+    // Surligne chaque siège du groupe
+    LINES.forEach(({ seatId }) => {
+      const el = findSeatElement(seatId);
+      if (el) el.classList.add('bts-hl');
+    });
+  }
+
+  function findSeatElement(seatId) {
+    if (!PLAN || !seatId) return null;
+    let el = PLAN.getElementById(seatId);
+    if (el) return el;
+    // Essaye data-seat-id
+    el = PLAN.querySelector(`[data-seat-id="${cssEscape(seatId)}"]`);
+    if (el) return el;
+    // Essaye variantes sans tirets
+    const alt = seatId.replace(/-/g, '');
+    el = PLAN.getElementById(alt) || PLAN.querySelector(`[data-seat-id="${cssEscape(alt)}"]`);
+    return el || null;
+  }
+
+  // Échappe un sélecteur CSS
+  function cssEscape(str) {
+    return String(str).replace(/(["'\\#.:])/g, '\\$1');
+  }
+
+  // ---------- Table des lignes ----------
+  function renderTable() {
+    const tbody = $('#linesTbody');
+    tbody.innerHTML = '';
+    LINES.forEach((line, idx) => tbody.appendChild(renderRow(line, idx)));
+    // activer le bouton si lignes + tarifs valides
+    $('#btnPay').disabled = !LINES.length || !LINES.every(l => !!l.tariffCode && isFinite(priceFor(l)));
+  }
+
+  function renderRow(line, idx) {
+    const tr = document.createElement('tr');
+
+    // Siège
+    const tdSeat = document.createElement('td');
+    tdSeat.textContent = line.seatId;
+    tr.appendChild(tdSeat);
+
+    // Zone
+    const tdZone = document.createElement('td');
+    tdZone.textContent = line.zoneKey || '—';
+    tr.appendChild(tdZone);
+
+    // Tarif (select)
+    const tdTariff = document.createElement('td');
+    const sel = document.createElement('select');
+    sel.className = 'w100';
+    const avail = TARIFFS.filter(t => PRICES[line.zoneKey]?.[t.code] != null);
+    avail.forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t.code;
+      opt.textContent = `${t.label || t.code} — ${fmtEuros(PRICES[line.zoneKey][t.code])}`;
+      if (t.code === line.tariffCode) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    sel.addEventListener('change', () => {
+      line.tariffCode = sel.value || null;
+      renderJustif(tdJustif, line);
+      updatePrice(tdPrice, line);
+      updateTotal();
+      $('#btnPay').disabled = !LINES.every(l => !!l.tariffCode && isFinite(priceFor(l)));
+    });
+    tdTariff.appendChild(sel);
+    tr.appendChild(tdTariff);
+
+    // Prix (auto)
+    const tdPrice = document.createElement('td');
+    tdPrice.className = 'num';
+    updatePrice(tdPrice, line);
+    tr.appendChild(tdPrice);
+
+    // Justification (si tarif la demande)
+    const tdJustif = document.createElement('td');
+    renderJustif(tdJustif, line);
+    tr.appendChild(tdJustif);
+
+    return tr;
+  }
+
+  function findTariff(tCode) {
+    const code = String(tCode || '').toUpperCase();
+    return TARIFFS.find(t => t.code === code) || null;
+  }
+
+  function renderJustif(container, line) {
+    container.innerHTML = '';
+    const t = findTariff(line.tariffCode);
+    if (!t) return;
+
+    const needField = !!t.requiresField;
+    const needInfo  = !!t.requiresInfo;
+
+    if (!needField && !needInfo) {
+      container.textContent = '—';
+      return;
+    }
+
+    if (needField) {
+      const label = document.createElement('label');
+      label.className = 'stack';
+      label.textContent = t.fieldLabel || 'Référence';
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.placeholder = t.fieldLabel || t.requiresField;
+      input.value = line.field || '';
+      input.addEventListener('input', () => { line.field = input.value.trim(); });
+      label.appendChild(input);
+      container.appendChild(label);
+    }
+
+    if (needInfo) {
+      const note = document.createElement('div');
+      note.className = 'hint';
+      note.textContent = t.requiresInfo;
+      container.appendChild(note);
+    }
+  }
+
+  function priceFor(line) {
+    const z = line.zoneKey;
+    const t = String(line.tariffCode || '').toUpperCase();
+    return PRICES[z]?.[t] ?? NaN;
+  }
+
+  function updatePrice(td, line) {
+    const cents = priceFor(line);
+    td.textContent = isFinite(cents) ? fmtEuros(cents) : '—';
+  }
+
+  function updateTotal() {
+    const sum = LINES.reduce((acc, l) => acc + (priceFor(l) || 0), 0);
+    $('#totalEuros').textContent = fmtEuros(sum);
+  }
+
+  // ---------- Soumission (POST /s/renew?id=...) ----------
+  async function submit() {
+    hideAlert();
+
+    // Validation justifs
+    for (const l of LINES) {
+      const t = findTariff(l.tariffCode);
+      if (!t) return showAlert("Veuillez sélectionner un tarif pour chaque siège.");
+      if (t.requiresField && !l.field) {
+        return showAlert(`Le tarif "${t.label || t.code}" requiert une information (${t.fieldLabel || t.requiresField}).`);
       }
     }
 
-    ui.btnRefresh.addEventListener('click', () => location.reload());
+    const payload = {
+      installments: Number($('#installments').value || 1),
+      selections: LINES.map(l => ({
+        seatId: l.seatId,
+        tariffCode: l.tariffCode,
+        justificationField: l.field || '',
+        justificationInfo: l.info || ''
+      }))
+    };
 
-    ui.btnCheckout.addEventListener('click', async () => {
-      ui.msg.textContent = '';
-      const lines = gatherLines(ui.list);
-      if (!lines.length) return setMsg('Sélectionnez au moins un siège provisionné à renouveler.');
-      const payerEmail = ui.payerEmail.value.trim();
-      if (!payerEmail) return setMsg('Renseignez un email du payeur.');
-      const installments = Number(ui.installments.value || 1);
-
-      ui.btnCheckout.disabled = true;
-      ui.btnCheckout.textContent = 'Création du paiement…';
-      try {
-        const r = await fetch(pageUrl.toString(), {
-          method:'POST',
-          headers:{ 'Content-Type':'application/json' },
-          body: JSON.stringify({ lines, installments, payer:{ email: payerEmail } })
-        });
-        const j = await r.json().catch(()=> ({}));
-        if (!r.ok) { throw new Error(j && j.error ? j.error : `HTTP ${r.status}`); }
-        if (!j.checkoutUrl) throw new Error('checkoutUrl manquant');
-        window.location.href = j.checkoutUrl;
-      } catch (e) {
-        setMsg(`Échec: ${e.message || e}`);
-      } finally {
-        ui.btnCheckout.disabled = false;
-        ui.btnCheckout.textContent = 'Payer via HelloAsso';
-      }
+    const url = location.pathname + location.search;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json', 'Accept':'application/json' },
+      body: JSON.stringify(payload)
     });
 
-  } catch (e) {
-    setMsg(`Impossible de charger vos données de renouvellement. (${e.message || e})`);
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const msg = json?.error || `Erreur ${res.status}`;
+      return showAlert(msg);
+    }
+    if (json.redirectUrl) {
+      location.href = json.redirectUrl;
+      return;
+    }
+    // Sinon, message normalisé
+    showAlert(json?.message || 'Réponse inattendue du serveur.', 'warn');
   }
+
+  // ---------- Événements ----------
+  $('#btnPay').addEventListener('click', submit);
+
+  // ---------- Go ----------
+  loadData().catch(err => {
+    console.error(err);
+    showAlert("Impossible de charger vos données de renouvellement. Lien invalide ou expiré ?");
+  });
 })();
 </script>
 </body>

@@ -20,5 +20,6 @@ safeMount('./admin-tariffs');         // prix par zone
 safeMount('./admin-tariff-catalog');  // <=== catalogue des tarifs
 safeMount('./payments');
 safeMount('./public');
+safeMount('./admin-email');
 
 module.exports = router;

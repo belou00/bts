@@ -9,10 +9,8 @@ const routes = require('../routes');
 function buildApp() {
   const app = express();
 
-  // sécurité basique
-  app.use(helmet({
-    contentSecurityPolicy: false
-  }));
+  // Sécurité & parsers
+  app.use(helmet({ contentSecurityPolicy: false }));
   app.use(express.json({ limit: '1mb' }));
   app.use(express.urlencoded({ extended: true }));
 
@@ -20,21 +18,29 @@ function buildApp() {
   const feOrigin = process.env.FRONTEND_ORIGIN || '*';
   app.use(cors({ origin: feOrigin === '*' ? true : feOrigin, credentials: false }));
 
-  // rate-limit soft
-  app.use('/api/', rateLimit({ windowMs: 15*60*1000, max: 1000 }));
+  // Rate limit
+  app.use('/api/', rateLimit({ windowMs: 15 * 60 * 1000, max: 1000 }));
 
-  // STUB HelloAsso en DEV (ou si HELLOASSO_STUB=true)
+  // Stub HelloAsso en DEV (intercepteur)
   try {
     const stub = require('../routes/stub');
-    app.use(stub); // placé avant routes => intercepte si actif
+    app.use(stub);
   } catch (_) {}
 
-  // Statique (plan, assets, pages)
-  app.use('/public', express.static(path.join(__dirname, '..', 'public')));
+  // ---------- STATIQUE (NOUVEAU) ----------
+  // Nouveau préfixe unique pour tout le front statique
+  app.use('/static', express.static(path.join(__dirname, '..', 'public', 'static')));
+  // Plans SVG par lieu
   app.use('/venues', express.static(path.join(__dirname, '..', 'public', 'venues')));
-  app.use('/assets', express.static(path.join(__dirname, '..', 'public', 'assets')));
+  // Pages d’admin statiques (pricing.html)
+  app.use('/admin', express.static(path.join(__dirname, '..', 'public', 'admin')));
 
-  // Routes applicatives (renew, admin, payments, etc.)
+  // Aliases rétro-compat (pendant la transition)
+  app.use('/assets', express.static(path.join(__dirname, '..', 'public', 'static'))); // /assets -> /static
+  app.use('/styles', express.static(path.join(__dirname, '..', 'public', 'static', 'css'))); // /styles -> /static/css
+  app.use('/public', express.static(path.join(__dirname, '..', 'public'))); // vieux liens éventuels
+
+  // Routes applicatives
   app.use(routes);
 
   // Health
@@ -43,10 +49,11 @@ function buildApp() {
   // 404
   app.use((req, res) => res.status(404).json({ error: 'not_found' }));
 
-  // erreur
+  // Erreur
   app.use((err, _req, res, _next) => {
     console.error('[API ERROR]', err.stack || err);
     res.status(500).json({ error: 'internal_error' });
+    return undefined;
   });
 
   return app;
