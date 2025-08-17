@@ -20,7 +20,8 @@
     "export:renew:prod": "node scripts/export-renew-seats.js 2025-2026 --base=https://billetterie.belougas.fr/bts --out=renew-seats.csv",
     "audit:missing-seats": "node scripts/audit-missing-seats.js 2025-2026 patinoire-blagnac --out=missing-seats.csv --grouped=missing-by-email.csv",
     "migrate:sub-index": "node scripts/migrate-subscriber-index.js",
-    "migrate:seathold-index": "node scripts/migrate-seathold-index.js"
+    "migrate:seathold-index": "node scripts/migrate-seathold-index.js",
+    "docs:build": "node scripts/docs/build-docs.js"
   },
   "dependencies": {
     "celebrate": "^15.0.3",
