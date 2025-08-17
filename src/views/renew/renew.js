@@ -1,17 +1,16 @@
-<!-- src/views/renew/renew.js -->
-<script>
+// src/views/renew/renew.js
 (async function(){
-  // --- helpers URL/DOM
   const qs = new URLSearchParams(location.search);
   const token = qs.get('id');
-  const seasonFromUrl = qs.get('season') || null; // facultatif
+  const seasonFromUrl = qs.get('season') || null;
   if (!token) {
     alert("Lien invalide ou expiré (id manquant).");
     return;
   }
 
   const $subInfo = document.getElementById('sub-info');
-  const $map = document.getElementById('arena-map');          // SVG inline
+  const $obj = document.getElementById('arena-obj') || null;        // si on passe par <object>
+  let $map = document.getElementById('arena-map') || null;          // fallback: inline SVG
   const $selList = document.getElementById('selection-list');
   const $btnSubmit = document.getElementById('btn-submit');
   const $msg = document.getElementById('form-msg');
@@ -20,12 +19,17 @@
   const $buyerEmail = document.getElementById('buyer-email');
   const $installments = document.getElementById('installments');
 
-  // --- état local
-  let ctx = { seasonCode: null, subscriber: null, seats: [], prefSeatId: null };
-  let seatById = new Map();            // seatId -> record {seatId,status,provisionedFor}
-  let selected = new Map();            // seatId -> { tariffCode, justification }
+  let ctx = { seasonCode: null, venueSlug: null, subscriber: null, seats: [], prefSeatId: null };
+  let seatById = new Map();
+  let selected = new Map();
 
-  // --- badges sur SVG
+  function setMapFromObject() {
+    try {
+      const doc = $obj?.contentDocument;
+      $map = doc && doc.querySelector('svg');
+    } catch {}
+  }
+
   function addBadgeFor(elem, label) {
     const bb = elem.getBBox();
     const r = Math.max(6, Math.min(bb.width, bb.height) * 0.20);
@@ -44,10 +48,10 @@
     g.appendChild(c); g.appendChild(t);
     elem.parentNode.insertBefore(g, elem.nextSibling);
   }
-  function clearBadges() { $map.querySelectorAll('g.badge').forEach(n => n.remove()); }
+  function clearBadges() { $map?.querySelectorAll('g.badge').forEach(n => n.remove()); }
 
-  // --- état visuel dans le plan
   function applySeatStates() {
+    if (!$map) return;
     clearBadges();
     const elems = $map.querySelectorAll('[data-seat-id]');
     elems.forEach(el => {
@@ -61,29 +65,21 @@
       else if (state === 'held') addBadgeFor(el, 'H');
       else if (state === 'booked') addBadgeFor(el, 'X');
 
-      // Pré-sélection automatique si prefSeatId
       if (ctx.prefSeatId && sid === ctx.prefSeatId) {
-        trySelectSeat(el, true); // true = force silently
+        trySelectSeat(el, true);
       }
     });
   }
 
-  // --- peut-on sélectionner ce siège ?
   function isSelectable(seatId) {
     const rec = seatById.get(seatId);
     if (!rec) return false;
-
-    // uniquement des sièges de N-1 pour CE subscriber (l’API ne renvoie que ceux-là)
     const state = rec.status;
-    // autorisé si:
-    // - provisioned POUR ce subscriber
-    // - ou available (rare mais possible si admin a libéré; on l’autorise par simplicité)
     const ownedProvision = (state === 'provisioned' && rec.provisionedFor && String(rec.provisionedFor) === String(ctx.subscriber.id));
     const isAvail = state === 'available';
     return ownedProvision || isAvail;
   }
 
-  // --- sélection/désélection UI
   function trySelectSeat(el, silent=false) {
     const seatId = el.getAttribute('data-seat-id');
     if (!isSelectable(seatId)) {
@@ -92,7 +88,6 @@
     }
     const was = el.classList.toggle('selected');
     if (was) {
-      // ajout avec tarif par défaut ADULT
       if (!selected.has(seatId)) selected.set(seatId, { tariffCode:'ADULT', justification:'' });
     } else {
       selected.delete(seatId);
@@ -101,7 +96,6 @@
     return true;
   }
 
-  // --- rendu de la colonne sélection
   function renderSelection() {
     $selList.innerHTML = '';
     if (selected.size === 0) {
@@ -138,18 +132,16 @@
       $selList.appendChild(row);
     }
 
-    // events “Retirer”
     $selList.querySelectorAll('button.remove').forEach(btn => {
       btn.addEventListener('click', () => {
         const sid = btn.getAttribute('data-seat');
         selected.delete(sid);
-        const el = $map.querySelector(`[data-seat-id="${CSS.escape(sid)}"]`);
+        const el = $map?.querySelector(`[data-seat-id="${CSS.escape(sid)}"]`);
         if (el) el.classList.remove('selected');
         renderSelection();
       });
     });
 
-    // events champs
     $selList.querySelectorAll('select, input').forEach(inp => {
       inp.addEventListener('input', () => {
         const sid = inp.getAttribute('data-seat');
@@ -157,7 +149,6 @@
         const cfg = selected.get(sid);
         if (!cfg) return;
         cfg[field] = inp.value;
-        // logique simple: si tarif != ADULT -> justification conseillée
         const justInput = $selList.querySelector(`input[data-seat="${sid}"][data-field="justification"]`);
         if (field === 'tariffCode' && justInput) {
           const need = inp.value !== 'ADULT';
@@ -167,14 +158,15 @@
     });
   }
 
-  // --- clics dans le plan
-  $map.addEventListener('click', (e) => {
-    const target = e.target.closest('[data-seat-id]');
-    if (!target) return;
-    trySelectSeat(target);
-  });
+  function bindMapHandlers() {
+    if (!$map) return;
+    $map.addEventListener('click', (e) => {
+      const target = e.target.closest('[data-seat-id]');
+      if (!target) return;
+      trySelectSeat(target);
+    });
+  }
 
-  // --- submit
   document.getElementById('renew-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     $btnSubmit.disabled = true; $msg.textContent = 'Initialisation du paiement…'; $msg.className = 'form-msg';
@@ -185,7 +177,6 @@
       justification: (cfg.tariffCode && cfg.tariffCode !== 'ADULT') ? (cfg.justification || '').trim() : ''
     }));
 
-    // règles simples côté client : si tarif réduit et pas de justif -> message
     const missing = selections.find(s => s.tariffCode !== 'ADULT' && !s.justification);
     if (missing) {
       $msg.textContent = `Justification manquante pour ${missing.seatId}.`;
@@ -227,7 +218,7 @@
     }
   });
 
-  // --- chargement des données
+  // Chargement initial
   try {
     const url = new URL(`/s/renew`, location.origin);
     url.searchParams.set('id', token);
@@ -237,21 +228,36 @@
     const data = await res.json();
     ctx = data;
 
-    // hydrate UI
     $subInfo.textContent = `${data.subscriber.firstName || ''} ${data.subscriber.lastName || ''} – Saison ${data.seasonCode}`;
     if (data.subscriber.email) $buyerEmail.value = data.subscriber.email;
 
-    seatById = new Map((data.seats || []).map(s => [s.seatId, s]));
-    ctx.prefSeatId = data.prefSeatId || null;
-
-    applySeatStates();
-    renderSelection(); // au cas où prefSeatId ait coché qque chose
+    // Si venue fournie → charger le SVG via <object>
+    if ($obj && data.venueSlug) {
+      $obj.data = `/public/venues/${encodeURIComponent(data.venueSlug)}/plan.svg`;
+      $obj.addEventListener('load', () => {
+        setMapFromObject();
+        if ($map) {
+          seatById = new Map((data.seats || []).map(s => [s.seatId, s]));
+          ctx.prefSeatId = data.prefSeatId || null;
+          bindMapHandlers();
+          applySeatStates();
+          renderSelection();
+        }
+      }, { once: true });
+    } else {
+      // fallback: inline <svg id="arena-map">
+      seatById = new Map((data.seats || []).map(s => [s.seatId, s]));
+      ctx.prefSeatId = data.prefSeatId || null;
+      bindMapHandlers();
+      applySeatStates();
+      renderSelection();
+    }
   } catch (err) {
     console.error(err);
     alert("Impossible de charger vos données de renouvellement. Lien invalide ou expiré ?");
   }
 
-  // (facultatif) rafraîchir l’état toutes les 15s
+  // (facultatif) refresh état toutes les 15s
   setInterval(async () => {
     try {
       const url = new URL(`/s/renew`, location.origin);
@@ -264,4 +270,4 @@
     } catch {}
   }, 15000);
 })();
-</script>
+
