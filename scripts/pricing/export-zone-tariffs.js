@@ -1,8 +1,8 @@
 // scripts/pricing/export-zone-tariffs.js
 // Usage:
 //   node scripts/pricing/export-zone-tariffs.js <seasonCode> <venueSlug> [--out=prices.csv]
+require('dotenv').config();
 
-require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
 const fs = require('fs');
 const path = require('path');
 const mongoose = require('mongoose');

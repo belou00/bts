@@ -1,6 +1,6 @@
 // scripts/tariffs/export-catalog.js
 // Usage: node scripts/tariffs/export-catalog.js [--out=tariff_catalog.csv]
-require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
+require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const mongoose = require('mongoose');

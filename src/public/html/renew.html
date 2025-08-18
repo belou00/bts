@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <title>Renouvellement d’abonnement – Belougas</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="../static/styles/renew.css" />
+  <style>[hidden]{display:none!important}</style>
+</head>
+<body>
+<header class="site-header">
+  <div class="brand">
+    <img src="../static/img/logo.png" alt="Belougas" />
+    <div>
+      <div class="kicker">BelougasTicketingSystem</div>
+      <h1>Renouvellement d’abonnement</h1>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+  <section id="notice" class="card hidden"></section>
+
+  <section class="layout">
+    <div class="plan card">
+      <div class="plan-toolbar">
+        <button id="zoomIn" type="button" aria-label="Zoomer">＋</button>
+        <button id="zoomOut" type="button" aria-label="Dézoomer">−</button>
+        <button id="zoomReset" type="button" aria-label="Réinitialiser">⟳</button>
+      </div>
+      <object id="venuePlan" type="image/svg+xml" data="" class="venue-object" aria-label="Plan de la patinoire"></object>
+      <div class="legend small">Surbrillance = vos sièges provisionnés</div>
+    </div>
+
+    <div class="form card">
+      <h2>Vos sièges</h2>
+      <div id="seatsList"></div>
+
+      <h2>Commande</h2>
+      <div class="grid">
+        <label>Email de la commande
+          <input id="contactEmail" type="email" placeholder="email@domaine.tld">
+        </label>
+        <label>Nombre d’échéances
+          <select id="installments">
+            <option value="1">1 fois</option>
+            <option value="2">2 fois</option>
+            <option value="3">3 fois</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="total">
+        Total : <span id="totalEuros">—</span>
+      </div>
+
+      <div class="actions">
+        <button id="payBtn" class="primary">Payer avec HelloAsso</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+(function() {
+  const notice = document.getElementById('notice');
+  const venueObj = document.getElementById('venuePlan');
+  const seatsList = document.getElementById('seatsList');
+  const installmentsEl = document.getElementById('installments');
+  const totalEl = document.getElementById('totalEuros');
+  const payBtn = document.getElementById('payBtn');
+  const contactEmailEl = document.getElementById('contactEmail');
+
+  const qs = new URLSearchParams(location.search);
+  const rawId = qs.get('id') || '';
+  const token = String(rawId)
+    .replace(/^[\s"'“”‘’]+|[\s"'“”‘’]+$/g, '')
+    .replace(/[\u200B\u200C\u200D\u2060\uFEFF]+/g, '');
+
+  let ctx = null;
+  const formState = {}; // seatId -> { firstName,lastName, tariffCode, field, info }
+
+  function euros(cents) {
+    if (typeof cents !== 'number') return '—';
+    return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(cents / 100);
+  }
+  function showNotice(type, html) {
+    notice.className = 'card ' + type;
+    notice.innerHTML = html;
+    notice.classList.remove('hidden');
+  }
+
+  async function loadContext() {
+    if (!token) {
+      showNotice('error', '<strong>Paramètre manquant.</strong><br/>Lien invalide (id absent).');
+      throw new Error('Missing token in URL');
+    }
+    const res = await fetch(`/s/renew?id=${encodeURIComponent(token)}`, {
+      headers: { 'Accept': 'application/json' }
+    });
+    if (!res.ok) {
+      let msg = 'Lien invalide ou expiré ?';
+      try { const err = await res.json(); if (err && err.error) msg += ` <small style="color:#94a3b8">(${err.error})</small>`; } catch {}
+      showNotice('error', '<strong>Impossible de charger vos données de renouvellement.</strong><br/>' + msg);
+      throw new Error('Renew load failed: ' + res.status);
+    }
+    ctx = await res.json();
+    if (!ctx || !ctx.ok) {
+      const code = (ctx && ctx.error) ? ctx.error : 'unknown';
+      showNotice('error', '<strong>Impossible de charger vos données.</strong><br/><small style="color:#94a3b8">(' + code + ')</small>');
+      throw new Error('Renew load error payload: ' + code);
+    }
+
+    contactEmailEl.value = ctx.email || '';
+    venueObj.data = ctx.venuePlanUrl;
+
+    if (ctx.phase === 'closed') {
+      showNotice('warn', 'La phase de renouvellement est <strong>fermée</strong>. Vous pouvez consulter vos sièges, mais le paiement est désactivé.');
+      payBtn.disabled = true;
+    }
+
+    renderSeats();
+    updateTotal();
+
+    venueObj.addEventListener('load', () => {
+      try { ensureSvgHighlightStyle(); highlightSeats(); enablePanZoom(); } catch(e){ console.error('SVG init error', e); }
+    }, { once: true });
+  }
+
+  function uniq(arr){ return Array.from(new Set(arr)); }
+  function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function escapeAttr(s){ return escapeHtml(s).replace(/"/g,'&quot;'); }
+  function upper(s){ return String(s||'').toUpperCase(); }
+
+  function deriveZoneFromSeatId(seatId) {
+    const id = String(seatId || '');
+    let m = /^([A-Z]\d+)-/.exec(id);
+    if (m) return m[1];
+    m = /^([A-Z])-/.exec(id);
+    return m ? m[1] : null;
+  }
+
+  function renderSeats() {
+    if (!ctx || !ctx.seats || !ctx.seats.length) {
+      seatsList.innerHTML = '<p>Aucun siège trouvé pour ce lien.</p>';
+      payBtn.disabled = true;
+      return;
+    }
+
+    // Map des tarifs par CODE normalisé (dédup)
+    const tariffsByCode = {};
+    for (const t of ctx.tariffs || []) tariffsByCode[upper(t.code)] = t;
+
+    seatsList.innerHTML = '';
+
+    ctx.seats.forEach((s, idx) => {
+      const zone = s.zoneKey || deriveZoneFromSeatId(s.seatId);
+      const avail = (ctx.pricesByZone && ctx.pricesByZone[zone]) ? ctx.pricesByZone[zone] : {};
+
+      // codes uniques triés
+      const codes = uniq(Object.keys(avail).map(upper));
+      const selectable = codes
+        .map(code => ({ code, priceCents: avail[code], meta: tariffsByCode[code] }))
+        .filter(x => !!x.meta)
+        .sort((a,b) => (a.meta.sortOrder||0) - (b.meta.sortOrder||0));
+
+      const holder = (ctx.holdersBySeat && ctx.holdersBySeat[s.seatId]) || { firstName:'', lastName:'' };
+      formState[s.seatId] = {
+        firstName: holder.firstName || '',
+        lastName : holder.lastName  || '',
+        tariffCode: selectable[0]?.code || null,
+        field: '', info: ''
+      };
+
+      const tId = `tariff-${idx}`;
+      const exId = `extra-${idx}`;
+      const optionHtml = selectable.map(t => (
+        `<option value="${t.code}">${escapeHtml(t.meta.label)} – ${euros(t.priceCents)}</option>`
+      )).join('') || '<option value="">— aucun tarif disponible —</option>';
+
+      const row = document.createElement('div');
+      row.className = 'seat-row';
+      row.innerHTML = `
+        <div class="seat-head">
+          <div class="seat-id"><strong>${s.seatId}</strong></div>
+          <div class="seat-zone">Zone <span>${zone || '—'}</span></div>
+        </div>
+
+        <div class="grid">
+          <label>Prénom
+            <input type="text" data-seat="${s.seatId}" data-kind="firstName" value="${escapeAttr(formState[s.seatId].firstName)}" placeholder="Prénom">
+          </label>
+          <label>Nom
+            <input type="text" data-seat="${s.seatId}" data-kind="lastName" value="${escapeAttr(formState[s.seatId].lastName)}" placeholder="Nom">
+          </label>
+        </div>
+
+        <label class="tariff">
+          Tarif
+          <select id="${tId}" data-seat="${s.seatId}">
+            ${optionHtml}
+          </select>
+        </label>
+
+        <div id="${exId}" class="extra-container"></div>
+
+        <div class="price">Prix : <span class="price-value">—</span></div>
+      `;
+      seatsList.appendChild(row);
+
+      const selectEl = row.querySelector(`#${CSS.escape(tId)}`);
+      const priceEl = row.querySelector('.price-value');
+      const extraBox = row.querySelector(`#${CSS.escape(exId)}`);
+
+      row.addEventListener('input', (e) => {
+        const t = e.target;
+        if (t && t.dataset && t.dataset.seat && t.dataset.kind) {
+          formState[t.dataset.seat][t.dataset.kind] = t.value;
+        }
+      });
+
+      function renderExtrasFor(code) {
+        extraBox.innerHTML = '';
+        const t = tariffsByCode[upper(code)];
+        if (!t) return;
+        const needsF = !!t.requiresField;
+        const needsI = !!t.requiresInfo;
+        if (!needsF && !needsI) return; // ← rien si non requis
+        const frag = document.createDocumentFragment();
+        if (needsF) {
+          const lab = document.createElement('label');
+          lab.innerHTML = `${escapeHtml(t.fieldLabel || 'Justificatif')}<input type="text" data-seat="${s.seatId}" data-kind="field" placeholder="À renseigner">`;
+          frag.appendChild(lab);
+        }
+        if (needsI) {
+          const lab = document.createElement('label');
+          lab.innerHTML = `Information complémentaire<input type="text" data-seat="${s.seatId}" data-kind="info" placeholder="À préciser">`;
+          frag.appendChild(lab);
+        }
+        extraBox.appendChild(frag);
+      }
+
+      function updatePrice(code) {
+        const cents = avail[upper(code)];
+        priceEl.textContent = (typeof cents === 'number') ? euros(cents) : '—';
+      }
+
+      // init
+      renderExtrasFor(formState[s.seatId].tariffCode);
+      updatePrice(formState[s.seatId].tariffCode);
+
+      selectEl.addEventListener('change', () => {
+        const code = upper(selectEl.value || '');
+        formState[s.seatId].tariffCode = code;
+        renderExtrasFor(code);
+        updatePrice(code);
+        updateTotal();
+      });
+    });
+
+    updateTotal();
+  }
+
+  function updateTotal() {
+    if (!ctx || !ctx.seats) return;
+    let sum = 0;
+    for (const s of ctx.seats) {
+      const zone = s.zoneKey || deriveZoneFromSeatId(s.seatId);
+      const code = (formState[s.seatId]?.tariffCode) ? upper(formState[s.seatId].tariffCode) : '';
+      const price = ctx.pricesByZone?.[zone]?.[code];
+      if (typeof price === 'number') sum += price;
+    }
+    totalEl.textContent = euros(sum);
+  }
+
+  function ensureSvgHighlightStyle() {
+    const doc = venueObj.contentDocument;
+    const svg = doc && doc.querySelector('svg');
+    if (!svg) return;
+    if (!doc.querySelector('style[data-bts]')) {
+      const st = doc.createElementNS('http://www.w3.org/2000/svg','style');
+      st.setAttribute('data-bts', '1');
+      st.textContent = `
+        .highlight { stroke:#ffd166; stroke-width:2; fill: rgba(255,255,255,.2); paint-order: stroke fill; }
+      `;
+      svg.insertBefore(st, svg.firstChild);
+    }
+  }
+
+  function highlightSeats() {
+    if (!ctx || !ctx.seats || !ctx.seats.length) return;
+    const doc = venueObj.contentDocument;
+    const svg = doc && doc.querySelector('svg');
+    if (!svg) return;
+
+    ctx.seats.forEach(s => {
+      const sid = String(s.seatId);
+
+      // 1) data-seat-id exact
+      let el = doc.querySelector(`[data-seat-id="${CSS.escape(sid)}"]`);
+      // 2) id exact
+      if (!el) el = doc.getElementById(sid);
+      // 3) id sans tribune: "S1-A-003" -> "A-003"
+      if (!el) {
+        const parts = sid.split('-');
+        if (parts.length >= 3) {
+          const alt = parts.slice(1).join('-');
+          el = doc.getElementById(alt);
+        }
+      }
+      // 4) id compact "A003"
+      if (!el) {
+        const m = /-([A-Z])-(\d{2,3})$/.exec(sid);
+        if (m) {
+          const compact = `${m[1]}${m[2]}`;
+          el = doc.getElementById(compact);
+        }
+      }
+      if (el) el.classList.add('highlight');
+    });
+  }
+
+  // Pan/Zoom via viewBox — molette centrée au pointeur
+  function enablePanZoom() {
+    const doc = venueObj.contentDocument;
+    const svg = doc && doc.querySelector('svg');
+    if (!svg) return;
+
+    // ViewBox existant ou fallback
+    if (!svg.viewBox || svg.viewBox.baseVal.width === 0) {
+      const w = svg.width.baseVal.value || 1000;
+      const h = svg.height.baseVal.value || 600;
+      svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+    }
+    const vb = svg.viewBox.baseVal;
+    const original = { x: vb.x, y: vb.y, w: vb.width, h: vb.height };
+
+    let isPanning = false, panStart = { x:0, y:0 }, vbStart = { x: vb.x, y: vb.y };
+    let scale = 1;
+    const minScale = 0.5, maxScale = 6;
+
+    function clamp(n,a,b){ return Math.max(a, Math.min(b, n)); }
+    function setViewBox(x,y,w,h){ vb.x=x; vb.y=y; vb.width=w; vb.height=h; }
+
+    function pointFromClient(e){
+      const r = svg.getBoundingClientRect();
+      const rx = (e.clientX - r.left) / r.width;   // 0..1 horizontal
+      const ry = (e.clientY - r.top) / r.height;   // 0..1 vertical
+      return { x: vb.x + rx * vb.width, y: vb.y + ry * vb.height };
+    }
+
+    function zoomAt(factor, center){
+      const newScale = clamp(scale * factor, minScale, maxScale);
+      const k = newScale / scale;  // >1 = zoom in
+      scale = newScale;
+
+      // nouvelle taille du viewBox
+      const newW = original.w / scale;
+      const newH = original.h / scale;
+
+      // conserver le point "center" fixe
+      const nx = center.x - (center.x - vb.x) * k;
+      const ny = center.y - (center.y - vb.y) * k;
+
+      setViewBox(nx, ny, newW, newH);
+    }
+
+    svg.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const p = pointFromClient(e);
+      zoomAt((Math.sign(e.deltaY) > 0) ? 1/1.2 : 1.2, p);
+    }, { passive:false });
+
+    svg.addEventListener('pointerdown', (e) => {
+      isPanning = true; panStart = { x:e.clientX, y:e.clientY }; vbStart = { x:vb.x, y:vb.y };
+      svg.setPointerCapture(e.pointerId);
+    });
+    svg.addEventListener('pointermove', (e) => {
+      if (!isPanning) return;
+      const r = svg.getBoundingClientRect();
+      const dx = (e.clientX - panStart.x) * (vb.width / r.width);
+      const dy = (e.clientY - panStart.y) * (vb.height / r.height);
+      setViewBox(vbStart.x - dx, vbStart.y - dy, vb.width, vb.height);
+    });
+    function endPan(e){ isPanning = false; try{ svg.releasePointerCapture(e.pointerId) }catch{} }
+    svg.addEventListener('pointerup', endPan);
+    svg.addEventListener('pointerleave', endPan);
+
+    function centerForButtons(e){
+      if (e && e.clientX != null) return pointFromClient(e);
+      return { x: vb.x + vb.width/2, y: vb.y + vb.height/2 };
+    }
+    document.getElementById('zoomIn').onclick  = (e) => zoomAt(1.2,   centerForButtons(e));
+    document.getElementById('zoomOut').onclick = (e) => zoomAt(1/1.2, centerForButtons(e));
+    document.getElementById('zoomReset').onclick = () => { scale = 1; setViewBox(original.x, original.y, original.w, original.h); };
+  }
+
+  // Soumission (stub ou réel selon serveur)
+  document.getElementById('payBtn').addEventListener('click', async () => {
+    if (!ctx) return;
+    const contactEmail = (contactEmailEl.value || '').trim();
+
+    const lines = ctx.seats.map(s => {
+      const zone = s.zoneKey || deriveZoneFromSeatId(s.seatId);
+      const st = formState[s.seatId] || {};
+      return {
+        seatId: s.seatId,
+        zoneKey: zone,
+        firstName: st.firstName || '',
+        lastName:  st.lastName  || '',
+        tariffCode: st.tariffCode ? String(st.tariffCode).toUpperCase() : null,
+        field: st.field || '',
+        info:  st.info  || ''
+      };
+    });
+
+    for (const ln of lines) {
+      if (!ln.tariffCode) { alert(`Veuillez choisir un tarif pour ${ln.seatId}`); return; }
+    }
+
+    const body = {
+      seasonCode: ctx.seasonCode,
+      venueSlug: ctx.venueSlug,
+      contactEmail,
+      lines,
+      installments: Number(installmentsEl.value)||1
+    };
+
+    const res = await fetch(`/s/renew?id=${encodeURIComponent(token)}`, {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json', 'Accept':'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) { alert('Erreur paiement : ' + (data.error || res.status)); return; }
+    if (data.redirectUrl) location.href = data.redirectUrl;
+  });
+
+  loadContext().catch(console.error);
+})();
+</script>
+</body>
+</html>

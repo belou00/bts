@@ -11,7 +11,7 @@
 // Objectif : lister les seatId présents dans subscribers.previousSeasonSeats mais absents de seats(seasonCode)
 //            et indiquer s'ils existent dans le SeatCatalog (si venueSlug connu).
 //
-require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
+require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const mongoose = require('mongoose');

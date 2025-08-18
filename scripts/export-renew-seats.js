@@ -1,7 +1,8 @@
 // scripts/export-renew-seats.js
 // Usage:
 //   node scripts/export-renew-seats.js <seasonCode> [--base=http://localhost:8080] [--expires=30d] [--out=renew-seats.csv] [--sort=group|email] [--email=...] [--group=...]
-require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
+require('dotenv').config();
+
 const fs = require('fs');
 const path = require('path');
 const jwt = require('jsonwebtoken');

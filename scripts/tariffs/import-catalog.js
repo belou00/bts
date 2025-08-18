@@ -1,6 +1,7 @@
 // scripts/tariffs/import-catalog.js
 // Usage: node scripts/tariffs/import-catalog.js data/tariff_catalog.csv
-require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
+require('dotenv').config();
+
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');

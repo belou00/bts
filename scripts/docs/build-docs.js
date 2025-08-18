@@ -1,6 +1,7 @@
 // scripts/docs/build-docs.js
 // Génère les docs HTML Phase 1 dans le dossier /docs, prêtes pour GitHub Pages.
 // Usage: node scripts/docs/build-docs.js
+require('dotenv').config();
 
 const fs = require('fs');
 const path = require('path');
@@ -10,7 +11,7 @@ fs.mkdirSync(OUT_DIR, { recursive: true });
 
 const today = new Date().toISOString().slice(0, 10);
 
-// CSS commun (sobre, lisible sur GitHub Pages)
+// CSS commun
 const BASE_CSS = `
 :root{
   --bg:#0f172a; --panel:#111827; --text:#e5e7eb; --muted:#94a3b8; --border:#1f2937;
@@ -29,7 +30,7 @@ h3{font-size:18px;margin:18px 0 6px}
 p{margin:8px 0}
 ul{margin:6px 0 12px 22px}
 code,kbd,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,"Courier New",monospace}
-pre{background:#0b1020;border:1px solid var(--border);border-radius:8px;padding:12px;overflow:auto}
+pre{background:#0b1020;border:1px solid var(--border);border-radius:8px;padding:12px;overflow:auto;white-space:pre}
 table{width:100%;border-collapse:collapse;margin:10px 0 16px}
 th,td{border:1px solid var(--border);padding:8px;vertical-align:top}
 .small{color:var(--muted);font-size:12px}
@@ -70,8 +71,9 @@ function writeHtml(filename, title, body) {
   console.log('✓', filename);
 }
 
-// --------- Contenus des docs (HTML) ---------
-
+/* -----------------------------
+ * 01 – Cahier des charges
+ * ----------------------------- */
 const body1 = `
 <div class="card">
   <h1>Cahier des charges – Phase 1 (Renew)</h1>
@@ -128,9 +130,12 @@ const body1 = `
 </ul>
 
 <h2>6. Dépôt</h2>
-<p>Dépôt GitHub public <code>belou00/bts</code> – branches : <code>main</code> (PROD), <code>int</code> (INT).</p>
+<p>Dépôt GitHub public <code>belou00/bts</code> – branches : <code>main</code> (PROD), <code>int</code> (INT), <code>dev</code> (DEV).</p>
 `;
 
+/* -----------------------------
+ * 02 – Gestion de projet
+ * ----------------------------- */
 const body2 = `
 <div class="card"><h1>Gestion de projet – Approche agile</h1></div>
 <h2>1. Organisation</h2>
@@ -141,13 +146,13 @@ const body2 = `
 </ul>
 <h2>2. Environnements</h2>
 <ul>
-  <li><strong>DEV local</strong> : Node/Express sur <code>localhost:8080</code>, Mongo locale, HelloAsso stub possible.</li>
-  <li><strong>INT</strong> : VPS OVH, <code>billetterie-dev.belougas.fr</code>, HTTPS, Mongo <code>bts_int</code>, HA sandbox, PM2 <code>bts-int</code>.</li>
-  <li><strong>PROD</strong> : VPS OVH, <code>billetterie.belougas.fr</code>, HTTPS, Mongo <code>bts_prod</code>, HA prod, PM2 <code>bts-prod</code>.</li>
+  <li><strong>DEV</strong> : Node/Express local, HelloAsso stub possible.</li>
+  <li><strong>INT</strong> : VPS OVH, <code>billetterie-dev.belougas.fr</code>, Mongo <code>bts_int</code>, HA sandbox, PM2 <code>bts-int</code>.</li>
+  <li><strong>PROD</strong> : VPS OVH, <code>billetterie.belougas.fr</code>, Mongo <code>bts_prod</code>, HA prod, PM2 <code>bts-prod</code>.</li>
 </ul>
 <h2>3. Versionning & déploiement</h2>
 <ul>
-  <li>PR <code>int → main</code> pour promotion; tags <code>vX.Y.Z-rcN</code> (INT) et <code>vX.Y.Z</code> (PROD).</li>
+  <li>Flux à 3 branches : <code>dev → int → main</code>.</li>
   <li>INT : <code>git reset --hard origin/int && npm ci && pm2 restart bts-int</code></li>
   <li>PROD : <code>git reset --hard origin/main && npm ci && pm2 restart bts-prod</code></li>
 </ul>
@@ -156,24 +161,85 @@ const body2 = `
   <li>Tests manuels guidés, scripts CSV, /health, paiements sandbox, attestation e-mail.</li>
   <li>Audit CSV : cohérence sièges/renouvellements/prix.</li>
 </ul>
-<h2>5. Communication & validation</h2>
-<ul>
-  <li>Échanges courts, journal incidents/solutions, checklists INT avant promotion.</li>
-</ul>
 `;
 
+/* -----------------------------
+ * 03 – Architecture (avec arbo détaillée)
+ * ----------------------------- */
 const body3 = `
 <div class="card"><h1>Architecture générale</h1></div>
+
 <h2>1. Vue d’ensemble</h2>
 <ul>
-  <li>API Node.js/Express (routes REST + front statique).</li>
+  <li>API Node.js/Express (routes REST + front statique sous <code>/static</code> et <code>/venues/&lt;slug&gt;/plan.svg</code>).</li>
   <li>MongoDB : <code>Subscriber</code>, <code>Seat</code>, <code>SeatHold</code>, <code>Season</code>, <code>Tariff</code>, <code>TariffPrice</code>, <code>Counter</code>, <code>Order</code>.</li>
-  <li>Paiement HelloAsso; attestation e-mail après retour.</li>
-  <li>Front statique (HTML/CSS/JS) avec plan SVG par venue; préfixe <code>/bts</code> en INT/PROD.</li>
-  <li>Infra : Nginx (TLS), PM2 (bts-int, bts-prod).</li>
+  <li>Paiement HelloAsso (sandbox/prod) ; attestation e-mail après retour.</li>
+  <li>Infra : Nginx (TLS) + PM2 (bts-int, bts-prod) sur VPS OVH.</li>
 </ul>
 
-<h2>2. Modèles clés</h2>
+<h2>2. Arborescence (principale)</h2>
+<pre><code>.
+├── data/                         # CSV d'import/export (tarifs, prix, abonnés, liens)
+├── docs/                         # Pages HTML de documentation (GitHub Pages)
+├── scripts/
+│   ├── docs/
+│   │   └── build-docs.js         # Générateur des pages HTML (ce fichier)
+│   ├── email/
+│   │   └── send-renew-invites.js # Envoi d'invitations renew (CSV)
+│   ├── renewal/
+│   │   └── provision-seats.js    # Provision des sièges N-1 → status=provisioned
+│   ├── tariffs/
+│   │   └── import-catalog.js     # Import du catalogue des tarifs (codes/labels/justifs)
+│   ├── pricing/
+│   │   └── import-zone-tariffs.js# Import des prix par zone/saison/venue
+│   ├── import-subscribers-flat.js# Import abonnés "1 ligne = 1 siège"
+│   └── export-renew-groups.js    # Export des liens renew "par groupe"
+├── src/
+│   ├── config/
+│   │   └── env.js                # Sélection des variables selon APP_ENV (dev/int/prod)
+│   ├── loaders/
+│   │   ├── express.js            # Création app Express, static (/static, /venues, basePath)
+│   │   ├── mongo.js              # Connexion Mongo (MONGO_URI_DEV/INT/PROD)
+│   │   └── mailer.js             # Nodemailer (Gmail), bascule MAIL_ENABLED
+│   ├── models/
+│   │   ├── Counter.js            # Compteur (séquences: subscriberNo)
+│   │   ├── Order.js              # Commande (checkoutId, payer, lines, status)
+│   │   ├── Seat.js               # Siège (status available/provisioned/held/booked)
+│   │   ├── SeatHold.js           # Blocage temporaire (TTL index)
+│   │   ├── Season.js             # Saison (code, venueSlug, phases)
+│   │   ├── Subscriber.js         # Abonné (groupKey, subscriberNo, ...)
+│   │   ├── Tariff.js             # Catalogue de tarifs (codes, labels, champs requis)
+│   │   └── TariffPrice.js        # Prix par zone/saison/venue/tarif
+│   ├── routes/
+│   │   ├── index.js              # Montage des sous-routes
+│   │   ├── renew.js              # GET/POST renouvellement (token → sièges, tarifs, checkout)
+│   │   ├── payments-helloasso.js # POST checkout HelloAsso (intent)
+│   │   ├── ha.js                 # GET /ha/return|back|error (validation + attestation e-mail)
+│   │   ├── admin.js              # Admin (phases, close/open renewal, etc.)
+│   │   └── admin-email.js        # Test e-mail SMTP
+│   ├── services/
+│   │   ├── attestation.js        # Rendu HTML de l’attestation e-mail
+│   │   ├── helloasso.js          # Client HelloAsso (token, endpoints, status)
+│   │   └── mailer.js             # Envoi d’e-mails (from/subject/html...)
+│   ├── utils/
+│   │   ├── money.js              # fmtEuros, splitInstallments...
+│   │   └── pricing.js            # needJustification, computeSubscriptionPriceCents
+│   ├── public/
+│   │   ├── html/
+│   │   │   └── renew.html        # Front Renew (HTML)
+│   │   ├── styles/
+│   │   │   └── renew.css         # Styles
+│   │   ├── static/
+│   │   │   └── img/logo.png      # Logo club
+│   │   └── venues/
+│   │       └── patinoire-blagnac/
+│   │           └── plan.svg      # Plan SVG (ids de sièges)
+│   └── server.js                 # Entrée de l'application (start Express + Mongo)
+├── package.json
+└── README.md
+</code></pre>
+
+<h2>3. Modèles clés (rappel)</h2>
 <table>
 <tr><th>Modèle</th><th>Champs principaux</th></tr>
 <tr><td>Season</td><td>code, name, active, <strong>venueSlug</strong>, phases[{name,openAt,closeAt,enabled}]</td></tr>
@@ -185,52 +251,46 @@ const body3 = `
 <tr><td>Counter</td><td>key, seq (numérotation abonné)</td></tr>
 <tr><td>Order</td><td>seasonCode, payer, totalCents, installments, status, checkoutIntentId, haPaymentRef?, lines[{seatId,zoneKey,tariffCode,priceCents,subscriberId}]</td></tr>
 </table>
-
-<h2>3. Routes principales</h2>
-<ul>
-  <li><strong>Renew</strong> : <code>GET /s/renew?id=TOKEN</code>, <code>POST /s/renew?id=TOKEN</code></li>
-  <li><strong>HelloAsso</strong> : <code>POST /api/payments/helloasso/checkout</code>, <code>GET /ha/return|back|error</code></li>
-  <li><strong>Admin</strong> : tarifs & prix (catalogue, zone), email test</li>
-</ul>
-
-<h2>4. Scripts CLI</h2>
-<ul>
-  <li>Import abonnés (flat), provision seats, export liens renew, import catalogues/prix, email d’invitations.</li>
-</ul>
-
-<h2>5. Sécurité</h2>
-<ul>
-  <li>Secrets .env, CORS, rate-limit, HTTPS, Mongo auth (bind 127.0.0.1), TTL SeatHold, logs PM2, /health.</li>
-</ul>
 `;
 
+/* -----------------------------
+ * 04 – Installation (plus de commandes + résultats attendus)
+ * ----------------------------- */
 const body4 = `
 <div class="card"><h1>Guide d’installation</h1></div>
 
 <h2>1. Pré-requis</h2>
 <ul>
   <li>Ubuntu 22.04, Node ≥ 20, npm ≥ 10, MongoDB, Nginx, Certbot.</li>
-  <li>DNS : <code>billetterie-dev.belougas.fr</code> (INT) et <code>billetterie.belougas.fr</code> (PROD) vers l’IP VPS.</li>
+  <li>DNS : <code>billetterie-dev.belougas.fr</code> (INT) et <code>billetterie.belougas.fr</code> (PROD) → IP VPS.</li>
 </ul>
 
-<h2>2. Dépôts & arborescence</h2>
+<h2>2. Vérifications de base</h2>
+<pre><code>node -v           # → v20.x
+npm -v            # → 10.x
+mongod --version  # → &gt;= 6.x
+nginx -v          # → nginx/1.2x
+</code></pre>
+
+<h2>3. Dépôts & arborescence</h2>
 <pre><code>sudo mkdir -p /var/www/bts-int /var/www/bts-prod /var/log/pm2
 sudo chown -R $USER:$USER /var/www
 
 git clone git@github.com:belou00/bts.git /var/www/bts-int
-cd /var/www/bts-int &amp;&amp; git checkout int &amp;&amp; npm ci
+cd /var/www/bts-int &amp;&amp; git checkout int &amp;&amp; npm ci --omit=dev
 
 git clone git@github.com:belou00/bts.git /var/www/bts-prod
-cd /var/www/bts-prod &amp;&amp; git checkout main &amp;&amp; npm ci
+cd /var/www/bts-prod &amp;&amp; git checkout main &amp;&amp; npm ci --omit=dev
 </code></pre>
 
-<h2>3. MongoDB (auth + utilisateurs)</h2>
-<pre><code># /etc/mongod.conf
-security:
+<h2>4. MongoDB (auth + utilisateurs)</h2>
+<p><strong>/etc/mongod.conf</strong> :</p>
+<pre><code>security:
   authorization: enabled
 net:
   bindIp: 127.0.0.1
 </code></pre>
+<p>Création des users :</p>
 <pre><code>// INT
 use bts_int
 db.createUser({ user:"bts_int", pwd:"***", roles:[{role:"readWrite",db:"bts_int"}] })
@@ -238,13 +298,17 @@ db.createUser({ user:"bts_int", pwd:"***", roles:[{role:"readWrite",db:"bts_int"
 use bts_prod
 db.createUser({ user:"bts_prod", pwd:"***", roles:[{role:"readWrite",db:"bts_prod"}] })
 </code></pre>
+<p><em>Tests attendus</em> :</p>
+<pre><code>mongosh "mongodb://bts_int:&lt;PASS&gt;@127.0.0.1:27017/bts_int?authSource=bts_int" --eval 'db.runCommand({ping:1})'
+# → { ok: 1 }
+</code></pre>
 
-<h2>4. Variables d’environnement</h2>
-<p><code>/.env.int</code> (extrait) :</p>
+<h2>5. Variables d’environnement (INT exemple)</h2>
 <pre><code>APP_ENV=integration
 PORT=8081
 MONGO_URI_INT=mongodb://bts_int:&lt;PASS&gt;@127.0.0.1:27017/bts_int?authSource=bts_int
 JWT_SECRET=***INT***
+
 HELLOASSO_ENV=sandbox
 HELLOASSO_ORG_SLUG=...
 HELLOASSO_CLIENT_ID_SANDBOX=...
@@ -252,40 +316,52 @@ HELLOASSO_CLIENT_SECRET_SANDBOX=...
 HELLOASSO_RETURN_URL_SANDBOX=https://billetterie-dev.belougas.fr/bts/ha/return
 HELLOASSO_ERROR_URL_SANDBOX=https://billetterie-dev.belougas.fr/bts/ha/error
 HELLOASSO_BACK_URL_SANDBOX=https://billetterie-dev.belougas.fr/bts/ha/back
+
 APP_URL=https://billetterie-dev.belougas.fr/bts
 SELF_API_BASE=http://127.0.0.1:8081
 FRONTEND_ORIGIN=https://billetterie-dev.belougas.fr
+
 GMAIL_USER=...
 GMAIL_APP_PASSWORD=...
 FROM_EMAIL=billetterie@tbhc.fr
 </code></pre>
 
-<h2>5. PM2</h2>
+<h2>6. PM2 (démarrage + tests)</h2>
 <pre><code>pm2 start /var/www/ecosystem.config.js --only bts-int
-pm2 start /var/www/ecosystem.config.js --only bts-prod
 pm2 status
+pm2 logs bts-int --lines 50
+# Attendu dans les logs : "[BTS] Mongo connected", "API listening on http://localhost:8081"
 </code></pre>
 
-<h2>6. Nginx &amp; TLS</h2>
-<ul>
-  <li>Vhosts : INT → 127.0.0.1:8081, PROD → 127.0.0.1:8080.</li>
-  <li>Certbot HTTP-01 ; attention aux redirections parasites.</li>
-</ul>
+<h2>7. Nginx &amp; TLS</h2>
+<p>Test du proxy :</p>
+<pre><code>curl -s https://billetterie-dev.belougas.fr/bts/health | jq .
+# Attendu: {"ok":true,"env":"integration",...}
+</code></pre>
+<p>Challenge ACME (si besoin) :</p>
+<pre><code>sudo mkdir -p /var/www/html/.well-known/acme-challenge
+echo ok | sudo tee /var/www/html/.well-known/acme-challenge/test.txt
+curl -I http://billetterie-dev.belougas.fr/.well-known/acme-challenge/test.txt
+# Attendu: 200 OK (ou 301→200), pas d'intercepteur tiers
+</code></pre>
 
-<h2>7. Données &amp; tests</h2>
-<ul>
-  <li>Import catalogues, prix, abonnés (flat), provision seats, export liens, test e-mail.</li>
-  <li>Parcours checkout sandbox → retour → attestation e-mail.</li>
-</ul>
+<h2>8. Tests fonctionnels</h2>
+<pre><code># Front statique (CSS/plan)
+curl -I https://billetterie-dev.belougas.fr/bts/static/styles/renew.css     # → 200
+curl -I https://billetterie-dev.belougas.fr/bts/venues/patinoire-blagnac/plan.svg  # → 200
 
-<h2>8. Dépannage rapide</h2>
-<ul>
-  <li>Plan indisponible : vérifier <code>Season.venueSlug</code> et <code>/venues/&lt;slug&gt;/plan.svg</code>.</li>
-  <li>404 CSS/plan INT : basePath <code>/bts</code> bien géré.</li>
-  <li>Mongo URI manquante, HA 401 (client/secret/env), PM2 “Process not found” (start avant restart).</li>
-</ul>
+# Santé API
+curl -s https://billetterie-dev.belougas.fr/bts/health | jq .
+
+# E-mail test (adapter requireAdmin)
+curl -s "https://billetterie-dev.belougas.fr/bts/api/admin/email/test?to=toi@mail.com" \
+  -H "x-admin-key: &lt;SECRET&gt;" | jq .
+</code></pre>
 `;
 
+/* -----------------------------
+ * 05 – Exploitation (commandes + formats CSV)
+ * ----------------------------- */
 const body5 = `
 <div class="card"><h1>Guide d’exploitation</h1></div>
 
@@ -297,50 +373,123 @@ const body5 = `
   <li>Backups Mongo : <code>mongodump --db bts_prod</code></li>
 </ul>
 
-<h2>2. Nouvelle saison</h2>
+<h2>2. Démarrer une nouvelle saison</h2>
 <ol>
-  <li>Créer la <strong>saison</strong> (code, venueSlug, phases).</li>
-  <li>Importer <strong>catalogue</strong> de tarifs.</li>
-  <li>Importer <strong>prix par zone</strong>.</li>
+  <li>Créer la <strong>saison</strong> (<code>Season</code> : code, name, venueSlug, phases).</li>
+  <li>Importer <strong>catalogue</strong> de tarifs (tarifs génériques).</li>
+  <li>Importer <strong>prix par zone</strong> (saison/venue).</li>
   <li>Importer <strong>subscribers_flat</strong> (1 ligne = 1 siège).</li>
-  <li><strong>Provisionner</strong> sièges N-1.</li>
-  <li>Exporter <strong>liens renew</strong> (groupes) et envoyer invitations.</li>
+  <li><strong>Provisionner</strong> les sièges N-1.</li>
+  <li>Exporter <strong>liens renew</strong> par groupe et envoyer invitations.</li>
 </ol>
 
-<h2>3. Imports/Exports</h2>
-<ul>
-  <li><strong>Catalogues</strong> : <code>code,label,active,requiresField,fieldLabel,requiresInfo,sortOrder</code></li>
-  <li><strong>Prix</strong> : <code>zoneKey,tariffCode,priceCents</code></li>
-  <li><strong>Subscribers flat</strong> : <code>groupKey,email,firstName,lastName,phone,seasonCode,venueSlug,seatId,zoneKey</code></li>
-  <li><strong>Renew links</strong> : <code>groupKey,email,link,seats</code></li>
-</ul>
+<h2>3. Commandes (INT exemple)</h2>
+<h3>3.1 Catalogue de tarifs (import)</h3>
+<pre><code>node -r dotenv/config scripts/tariffs/import-catalog.js data/tariff_catalog.csv \\
+  dotenv_config_path=.env.int
+# Attendu: "Imported &lt;n&gt; tariffs" / diff si mise à jour
+</code></pre>
 
-<h2>4. Phases &amp; provisioning</h2>
-<ul>
-  <li>Pendant renew : sièges en <em>provisioned</em>.</li>
-  <li>Clôture : libération des non-renouvelés → <em>available</em>.</li>
-</ul>
+<h3>3.2 Prix par zone (import)</h3>
+<pre><code>node -r dotenv/config scripts/pricing/import-zone-tariffs.js 2025-2026 patinoire-blagnac \\
+  data/prices_patinoire-blagnac.csv dotenv_config_path=.env.int
+# Attendu: "Upserted &lt;n&gt; zone prices"
+</code></pre>
+
+<h3>3.3 Abonnés (flat, 1 ligne = 1 siège)</h3>
+<pre><code>node -r dotenv/config scripts/import-subscribers-flat.js data/subscribers_flat.csv 2025-2026 \\
+  --venue=patinoire-blagnac dotenv_config_path=.env.int
+# Attendu: "Imported &lt;n&gt; subscriber seat lines"
+</code></pre>
+
+<h3>3.4 Provision des sièges N-1</h3>
+<pre><code>node -r dotenv/config scripts/renewal/provision-seats.js 2025-2026 \\
+  --venue=patinoire-blagnac --apply dotenv_config_path=.env.int
+# Attendu: "scanned=&lt;n&gt; provisioned=&lt;m&gt; ..."
+</code></pre>
+
+<h3>3.5 Export des liens renew (groupes)</h3>
+<pre><code>node -r dotenv/config scripts/export-renew-groups.js 2025-2026 \\
+  --base=https://billetterie-dev.belougas.fr/bts --out=renew-groups-int.csv \\
+  dotenv_config_path=.env.int
+# Fichier généré: renew-groups-int.csv
+</code></pre>
+
+<h3>3.6 Envoi d’invitations (e-mail)</h3>
+<pre><code># DRY-RUN
+node -r dotenv/config scripts/email/send-renew-invites.js renew-groups-int.csv \\
+  --season=2025-2026 --venue=patinoire-blagnac --fromName="TBHC Billetterie" \\
+  --dry dotenv_config_path=.env.int
+
+# ENVOI RÉEL
+node -r dotenv/config scripts/email/send-renew-invites.js renew-groups-int.csv \\
+  --season=2025-2026 --venue=patinoire-blagnac --fromName="TBHC Billetterie" \\
+  dotenv_config_path=.env.int
+</code></pre>
+
+<h3>3.7 Clôturer la phase renew</h3>
+<p>(si route admin activée)</p>
+<pre><code>curl -X POST https://billetterie-dev.belougas.fr/bts/api/admin/renewal/close \\
+  -H "x-admin-key: &lt;SECRET&gt;"
+# Attendu: { "ok": true, "released": &lt;n&gt; }
+</code></pre>
+
+<h2>4. Formats CSV (en-têtes & exemples)</h2>
+
+<h3>4.1 Catalogue des tarifs – <code>data/tariff_catalog.csv</code></h3>
+<p><strong>En-têtes :</strong> <code>code,label,active,requiresField,fieldLabel,requiresInfo,sortOrder</code></p>
+<pre><code>code,label,active,requiresField,fieldLabel,requiresInfo,sortOrder
+NORMAL,TARIF NORMAL,true,false,,false,10
+ETUDIANT,TARIF ETUDIANT,true,true,Numéro INE,true,20
+12_17,TARIF 12-17 ANS,true,false,,true,30
+U12,TARIF MOINS DE 12 ANS,true,false,,true,40
+LIC_MAJ,TARIF CLUB - LICENCIE MAJEUR,true,true,Numéro de licence,false,50
+LIC_MIN,TARIF CLUB - LICENCIE MINEUR,true,true,Numéro de licence,false,60
+PARENT,TARIF CLUB - PARENT DE LICENCIE,true,true,Numéro de licence,true,70
+</code></pre>
+
+<h3>4.2 Prix par zone – <code>data/prices_patinoire-blagnac.csv</code></h3>
+<p><strong>En-têtes :</strong> <code>zoneKey,tariffCode,priceCents</code></p>
+<pre><code>zoneKey,tariffCode,priceCents
+N1,NORMAL,18000
+N1,ETUDIANT,12600
+N1,12_17,12000
+N1,U12,9000
+S1,NORMAL,16000
+S1,ETUDIANT,11200
+S1,12_17,10800
+S1,U12,8000
+</code></pre>
+
+<h3>4.3 Abonnés (flat) – <code>data/subscribers_flat.csv</code></h3>
+<p><strong>En-têtes :</strong> <code>groupKey,email,firstName,lastName,phone,seasonCode,venueSlug,seatId,zoneKey</code></p>
+<p><em>1 ligne = 1 siège</em>. Exemple (nomenclature de siège type <code>N1-A-001</code> / <code>S1-H-012</code>) :</p>
+<pre><code>groupKey,email,firstName,lastName,phone,seasonCode,venueSlug,seatId,zoneKey
+alice-group,alice@example.com,Alice,Durand,0600000001,2025-2026,patinoire-blagnac,N1-A-001,N1
+alice-group,alice@example.com,Alice,Durand,0600000001,2025-2026,patinoire-blagnac,N1-A-002,N1
+bruno-group,bruno@example.com,Bruno,Martin,0600000002,2025-2026,patinoire-blagnac,S1-H-003,S1
+</code></pre>
+
+<h3>4.4 Liens renew (export) – <code>renew-groups-*.csv</code></h3>
+<p><strong>En-têtes :</strong> <code>groupKey,email,link,seats</code> – <code>seats</code> = liste séparée par <code>;</code>.</p>
+<pre><code>groupKey,email,link,seats
+alice-group,alice@example.com,https://billetterie-dev.belougas.fr/bts/s/renew?id=...,N1-A-001;N1-A-002
+bruno-group,bruno@example.com,https://billetterie-dev.belougas.fr/bts/s/renew?id=...,S1-H-003
+</code></pre>
 
 <h2>5. E-mails</h2>
 <ul>
-  <li>Test SMTP : <code>/api/admin/email/test?to=...</code></li>
-  <li>Invitations renew (CSV) : script CLI d’envoi en masse.</li>
-  <li>Attestation : envoi automatique au retour HelloAsso payé.</li>
+  <li>Test SMTP : <code>/api/admin/email/test?to=...</code> (header admin si nécessaire).</li>
+  <li>Invitations : script CLI (dry-run conseillé).</li>
+  <li>Attestation : envoi automatique au retour HelloAsso payé (<code>/ha/return</code>).</li>
 </ul>
 
 <h2>6. Supervision &amp; sécurité</h2>
 <ul>
-  <li>Logs PM2, grep erreurs HA/e-mail.</li>
-  <li>syncIndexes après migrations.</li>
+  <li>Logs PM2, grep erreurs HelloAsso/e-mail.</li>
+  <li><code>syncIndexes</code> après migrations.</li>
   <li>Rotation des secrets, .env permissions.</li>
   <li>Mongo auth/bind 127.0.0.1.</li>
-</ul>
-
-<h2>7. Incident &amp; rollback</h2>
-<ul>
-  <li>HelloAsso indispo : stub en DEV/INT, mise en attente.</li>
-  <li>Rollback : reset sur tag stable + restart.</li>
-  <li>Données : restauration depuis dumps.</li>
 </ul>
 `;
 
@@ -374,7 +523,6 @@ const outLogo = path.join(OUT_DIR, 'logo.png');
 if (fs.existsSync(srcLogo)) {
   fs.copyFileSync(srcLogo, outLogo);
 } else {
-  // 1x1 transparent PNG
   const b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==";
   fs.writeFileSync(outLogo, Buffer.from(b64, 'base64'));
 }
