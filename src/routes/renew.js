@@ -1,244 +1,202 @@
 // src/routes/renew.js
-const path = require('path');
 const express = require('express');
 const jwt = require('jsonwebtoken');
 
-const Season = require('../models/Season');
 const Subscriber = require('../models/Subscriber');
 const Seat = require('../models/Seat');
-
-const {
-  getTariffCatalog,
-  getZonePriceTable,
-  computeSubscriptionPriceCents,
-  requiresJustifFromCatalog
-} = require('../utils/pricing');
+const Season = require('../models/Season');
+const Tariff = require('../models/Tariff');
+const TariffPrice = require('../models/TariffPrice');
 
 const router = express.Router();
 
-function getBasePath() {
-  try {
-    const u = new URL(process.env.APP_URL || 'http://localhost:8080');
-    const p = u.pathname || '/';
-    return p === '/' ? '' : p.replace(/\/$/, '');
-  } catch { return ''; }
+function isPhaseOpen(seasonDoc, phaseName = 'renewal') {
+  if (!seasonDoc || !Array.isArray(seasonDoc.phases)) return false;
+  const p = seasonDoc.phases.find(x => x.name === phaseName && x.enabled !== false);
+  if (!p) return false;
+  const now = new Date();
+  if (p.openAt && now < new Date(p.openAt)) return false;
+  if (p.closeAt && now > new Date(p.closeAt)) return false;
+  return true;
 }
-function wantsJson(req) {
-  const a = (req.headers['accept'] || '').toLowerCase();
-  return a.includes('application/json') || req.xhr;
+function basePath(req) {
+  return req.app.get('basePath') || '';
+}
+function upper(s){ return String(s||'').toUpperCase(); }
+
+// Déduction zone depuis seatId, ex: "S1-A-001" => "S1"; tolère "S-A-001" => "S"
+function deriveZoneFromSeatId(seatId) {
+  const id = String(seatId || '');
+  let m = /^([A-Z]\d+)-/.exec(id);  // S1-...
+  if (m) return m[1];
+  m = /^([A-Z])-/.exec(id);         // S-...
+  return m ? m[1] : null;
 }
 
-/** GET /s/renew?id=<JWT>[&seat=<prefSeatId>] */
+// Nettoyage robuste du token (quotes, espaces, zero-width, guillemets typographiques)
+function cleanToken(raw) {
+  return String(raw || '')
+    .replace(/^[\s"'“”‘’]+|[\s"'“”‘’]+$/g, '')
+    .replace(/[\u200B\u200C\u200D\u2060\uFEFF]+/g, '');
+}
+
 router.get('/s/renew', async (req, res, next) => {
-  const asJson = wantsJson(req);
   try {
-    const token = req.query.id;
-    if (!token) return asJson ? res.status(400).json({ error: 'missing_token' }) : sendRenewHtml(res);
+    const raw = req.query.id;
+    if (!raw) return res.status(400).json({ error: 'missing_token' });
+    const id = cleanToken(raw);
 
     let payload;
     try {
-      payload = jwt.verify(token, process.env.JWT_SECRET);
-    } catch {
-      return asJson ? res.status(401).json({ error: 'invalid_or_expired_token' }) : sendRenewHtml(res);
-    }
-    if (payload.phase !== 'renewal') return asJson ? res.status(400).json({ error: 'wrong_phase' }) : sendRenewHtml(res);
-
-    const season = await Season.findOne({ code: payload.seasonCode }).lean();
-    if (!season) return asJson ? res.status(404).json({ error: 'season_not_found' }) : sendRenewHtml(res);
-
-    // groupKey
-    let groupKey = payload.groupKey || null;
-    if (!groupKey) {
-      if (!payload.subscriberId) return asJson ? res.status(400).json({ error: 'missing_subscriber_or_group' }) : sendRenewHtml(res);
-      const sub = await Subscriber.findById(payload.subscriberId, { email:1, groupKey:1 }).lean();
-      if (!sub) return asJson ? res.status(404).json({ error: 'subscriber_not_found' }) : sendRenewHtml(res);
-      groupKey = sub.groupKey || sub.email;
-    }
-
-    // Membres + sièges N-1
-    const members = await Subscriber.find(
-      { $or: [ { groupKey }, { $and: [{ groupKey: null }, { email: groupKey }] } ] },
-      { firstName:1, lastName:1, email:1, previousSeasonSeats:1 }
-    ).lean();
-
-    const seatOwner = new Map();
-    const seatIds = [];
-    for (const m of members) {
-      for (const sid of (m.previousSeasonSeats || [])) {
-        const id = String(sid).trim().toUpperCase();
-        if (!seatOwner.has(id)) seatOwner.set(id, m.email);
-        seatIds.push(id);
-      }
-    }
-    const uniqSeatIds = Array.from(new Set(seatIds));
-
-    const q = { seasonCode: season.code };
-    if (uniqSeatIds.length) q.seatId = { $in: uniqSeatIds };
-    if (season.venueSlug) q.venueSlug = season.venueSlug;
-    const seatDocs = uniqSeatIds.length
-      ? await Seat.find(q, { seatId:1, zoneKey:1, status:1, provisionedFor:1 }).lean()
-      : [];
-    const byId = new Map(seatDocs.map(s => [s.seatId, s]));
-    const seatsView = uniqSeatIds.map(seatId => {
-      const s = byId.get(seatId);
-      return {
-        seatId,
-        ownerEmail: seatOwner.get(seatId) || null,
-        exists: !!s,
-        status: s ? s.status : 'missing',
-        provisioned: !!(s && s.status === 'provisioned'),
-        zoneKey: s?.zoneKey || null,
-        provisionedFor: s?.provisionedFor || null
-      };
-    });
-
-    const basePath = getBasePath();
-    const venuePlanUrl = season.venueSlug ? `${basePath}/venues/${season.venueSlug}/plan.svg` : null;
-
-    // 🔎 Catalogue + table des prix (DB si présents, sinon fallback)
-    const tariffs = await getTariffCatalog();
-    const prices = await getZonePriceTable({ seasonCode: season.code, venueSlug: season.venueSlug || null });
-
-    const response = {
-      seasonCode: season.code,
-      venueSlug: season.venueSlug || null,
-      venuePlanUrl,
-      groupKey,
-      members: members.map(m => ({ firstName: m.firstName || '', lastName: m.lastName || '', email: m.email })),
-      seats: seatsView,
-      prefSeatId: req.query.seat ? String(req.query.seat).trim().toUpperCase() : null,
-      tariffs,
-      prices,
-      token
-    };
-
-    return asJson ? res.json(response) : sendRenewHtml(res);
-  } catch (err) {
-    return next(err);
-  }
-});
-
-/** POST /s/renew?id=<JWT> */
-router.post('/s/renew', async (req, res, next) => {
-  try {
-    const token = req.query.id || req.body?.id;
-    if (!token) return res.status(400).json({ error: 'missing_token' });
-
-    let payload;
-    try {
-      payload = jwt.verify(token, process.env.JWT_SECRET);
+      const ignoreExp = process.env.RENEW_JWT_IGNORE_EXP === 'true';
+      payload = jwt.verify(id, process.env.JWT_SECRET, ignoreExp ? { ignoreExpiration: true } : undefined);
     } catch {
       return res.status(401).json({ error: 'invalid_or_expired_token' });
     }
-    if (payload.phase !== 'renewal') return res.status(400).json({ error: 'wrong_phase' });
 
-    const season = await Season.findOne({ code: payload.seasonCode }).lean();
+    const { email, groupKey, seasonCode, venueSlug, seatIds = [] } = payload || {};
+    if (!seasonCode || !venueSlug) return res.status(400).json({ error: 'bad_token_payload' });
+
+    const season = await Season.findOne({ code: seasonCode }).lean();
     if (!season) return res.status(404).json({ error: 'season_not_found' });
 
-    let groupKey = payload.groupKey || null;
-    let sub = null;
-    if (!groupKey) {
-      if (!payload.subscriberId) return res.status(400).json({ error: 'missing_subscriber_or_group' });
-      sub = await Subscriber.findById(payload.subscriberId, { email:1, groupKey:1 }).lean();
-      if (!sub) return res.status(404).json({ error: 'subscriber_not_found' });
-      groupKey = sub.groupKey || sub.email;
-    }
+    // Récup sièges : priorité aux seatIds du token
+    let seats = [];
+    if (Array.isArray(seatIds) && seatIds.length) {
+      seats = await Seat.find({ seasonCode, venueSlug, seatId: { $in: seatIds } }).lean();
+    } else {
+      seats = await Seat.find({ seasonCode, venueSlug, status: 'provisioned' }).lean();
 
-    const members = await Subscriber.find(
-      { $or: [ { groupKey }, { $and: [ { groupKey: null }, { email: groupKey } ] } ] },
-      { _id:1, email:1, previousSeasonSeats:1 }
-    ).lean();
-    const memberIds = new Set(members.map(m => String(m._id)));
-    const allowedSeatIds = new Set(members.flatMap(m => (m.previousSeasonSeats || []).map(s => String(s).trim().toUpperCase())));
-
-    const linesIn = Array.isArray(req.body?.lines) ? req.body.lines : [];
-    if (!linesIn.length) return res.status(400).json({ error: 'empty_lines' });
-
-    const reqSeatIds = Array.from(new Set(linesIn.map(l => String(l.seatId || '').trim().toUpperCase()).filter(Boolean)));
-    const seatDocs = await Seat.find(
-      {
-        seasonCode: season.code,
-        seatId: { $in: reqSeatIds },
-        ...(season.venueSlug ? { venueSlug: season.venueSlug } : {})
-      },
-      { seatId:1, zoneKey:1, status:1, provisionedFor:1 }
-    ).lean();
-    const seatsById = new Map(seatDocs.map(s => [s.seatId, s]));
-
-    const invalid = [];
-    for (const sid of reqSeatIds) {
-      const s = seatsById.get(sid);
-      if (!s) { invalid.push({ seatId: sid, reason: 'missing_in_season' }); continue; }
-      if (!allowedSeatIds.has(sid)) { invalid.push({ seatId: sid, reason: 'not_in_group' }); continue; }
-      if (s.status !== 'provisioned') { invalid.push({ seatId: sid, reason: `status_${s.status}` }); continue; }
-      if (!s.provisionedFor || !memberIds.has(String(s.provisionedFor))) {
-        invalid.push({ seatId: sid, reason: 'provisioned_for_other' }); continue;
-      }
-    }
-    if (invalid.length) return res.status(400).json({ error: 'invalid_seats', details: invalid });
-
-    const pricedLines = linesIn.map(l => {
-      const sid = String(l.seatId || '').trim().toUpperCase();
-      const s = seatsById.get(sid);
-      return {
-        seatId: sid,
-        zoneKey: s?.zoneKey || null,
-        tariffCode: String(l.tariffCode || '').trim(),
-        justification: (l.justification || '').trim()
-      };
-    });
-
-    // ✅ justification selon le catalogue DB
-    const catalog = await getTariffCatalog();
-    for (const ln of pricedLines) {
-      if (requiresJustifFromCatalog(catalog, ln.tariffCode) && !ln.justification) {
-        return res.status(400).json({ error: 'justification_required', seatId: ln.seatId, tariffCode: ln.tariffCode });
-      }
-    }
-
-    const totalCents = await computeSubscriptionPriceCents(
-      pricedLines,
-      { seasonCode: season.code, venueSlug: season.venueSlug }
-    );
-
-    const installments = Math.max(1, Math.min(3, Number(req.body?.installments || 1)));
-    const payerEmail =
-      (req.body?.payer && String(req.body.payer.email || '').trim()) ||
-      (sub?.email) ||
-      (members[0]?.email) ||
-      null;
-    if (!payerEmail) return res.status(400).json({ error: 'missing_payer_email' });
-
-    const apiBase = process.env.SELF_API_BASE || 'http://127.0.0.1:8080';
-    const resp = await fetch(`${apiBase.replace(/\/$/,'')}/api/payments/helloasso/checkout`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        subscriberId: sub?._id || null,
-        seasonCode: season.code,
-        totalCents,
-        itemName: 'Renouvellement abonnement (groupe)',
-        installments,
-        payer: { email: payerEmail },
-        meta: {
-          groupKey,
-          seats: pricedLines.map(x => ({ seatId: x.seatId, zoneKey: x.zoneKey, tariffCode: x.tariffCode }))
+      // fallback: précédents par email
+      if (!seats.length && email) {
+        const subs = await Subscriber.find({ email }).lean();
+        const allPrev = subs.flatMap(s => Array.isArray(s.previousSeasonSeats) ? s.previousSeasonSeats : []);
+        const uniq = [...new Set(allPrev)];
+        if (uniq.length) {
+          seats = await Seat.find({ seasonCode, venueSlug, seatId: { $in: uniq } }).lean();
         }
-      })
-    });
-
-    if (!resp.ok) {
-      const t = await resp.text().catch(() => '');
-      return res.status(502).json({ error: 'helloasso_error', status: resp.status, body: t.slice(0, 500) });
+      }
     }
-    const data = await resp.json();
-    return res.json({ checkoutUrl: data.redirectUrl, checkoutIntentId: data.checkoutIntentId, totalCents });
+
+    const seatsOut = seats.map(s => {
+      const z = deriveZoneFromSeatId(s.seatId) || s.zoneKey || null;
+      return { seatId: s.seatId, zoneKey: z, status: s.status };
+    });
+    const zones = [...new Set(seatsOut.map(s => s.zoneKey).filter(Boolean))];
+
+    // Tarifs dédupliqués par code (UPPER), ordre par sortOrder puis code
+    const catalogRaw = await Tariff.find({ active: true }).sort({ sortOrder: 1, code: 1 }).lean();
+    const byCode = new Map();
+    for (const t of catalogRaw) {
+      const code = upper(t.code);
+      if (!byCode.has(code)) byCode.set(code, t);
+    }
+    const catalog = Array.from(byCode.values());
+
+    const prices = zones.length
+      ? await TariffPrice.find({ seasonCode, venueSlug, zoneKey: { $in: zones } }).lean()
+      : [];
+
+    const pricesByZone = {};
+    for (const p of prices) {
+      if (!pricesByZone[p.zoneKey]) pricesByZone[p.zoneKey] = {};
+      pricesByZone[p.zoneKey][upper(p.tariffCode)] = p.priceCents;
+    }
+
+    // Remonter titulaires par siège :
+    // - priorité à groupKey s'il est dans le token, sinon email
+    let subs = [];
+    if (groupKey) subs = await Subscriber.find({ groupKey }).lean();
+    else if (email) subs = await Subscriber.find({ email }).lean();
+
+    const holdersBySeat = {};
+    if (subs.length && seatsOut.length) {
+      for (const s of seatsOut) {
+        const hit = subs.find(u =>
+          u.prefSeatId === s.seatId ||
+          (Array.isArray(u.previousSeasonSeats) && u.previousSeasonSeats.includes(s.seatId))
+        );
+        if (hit) {
+          holdersBySeat[s.seatId] = {
+            firstName: hit.firstName || '',
+            lastName: hit.lastName || ''
+          };
+        }
+      }
+    }
+
+    const planUrl = `${basePath(req)}/venues/${venueSlug}/plan.svg`;
+
+    res.json({
+      ok: true,
+      seasonCode,
+      venueSlug,
+      email: email || null,
+      phase: isPhaseOpen(season, 'renewal') ? 'open' : 'closed',
+      seats: seatsOut,
+      holdersBySeat,
+      tariffs: catalog.map(t => ({
+        code: upper(t.code),
+        label: t.label,
+        requiresField: !!t.requiresField,
+        fieldLabel: t.fieldLabel || null,
+        requiresInfo: !!t.requiresInfo,
+        sortOrder: t.sortOrder || 0
+      })),
+      pricesByZone,
+      venuePlanUrl: planUrl
+    });
   } catch (err) {
-    return next(err);
+    next(err);
   }
 });
 
-function sendRenewHtml(res) {
-  res.sendFile(path.join(__dirname, '..', 'public', 'renew.html'));
-}
+// POST /s/renew : stub paiement si HELLOASSO_STUB=true
+router.post('/s/renew', async (req, res, next) => {
+  try {
+    const { seasonCode, venueSlug, contactEmail, installments = 1, lines = [] } = req.body || {};
+    if (!seasonCode || !venueSlug || !Array.isArray(lines) || lines.length === 0) {
+      return res.status(400).json({ error: 'bad_request' });
+    }
+
+    // Recalcul du total depuis la base
+    const zones = [...new Set(lines.map(l => l.zoneKey || deriveZoneFromSeatId(l.seatId)).filter(Boolean))];
+    const prices = zones.length
+      ? await TariffPrice.find({ seasonCode, venueSlug, zoneKey: { $in: zones } }).lean()
+      : [];
+
+    const priceMap = {};
+    for (const p of prices) priceMap[`${p.zoneKey}::${upper(p.tariffCode)}`] = p.priceCents;
+
+    let totalCents = 0;
+    for (const l of lines) {
+      const zone = l.zoneKey || deriveZoneFromSeatId(l.seatId);
+      const code = upper(l.tariffCode);
+      if (!zone || !code) return res.status(400).json({ error: 'invalid_line', seatId: l.seatId });
+      const cents = priceMap[`${zone}::${code}`];
+      if (typeof cents !== 'number') return res.status(400).json({ error: 'price_not_found', seatId: l.seatId, zone, code });
+      totalCents += cents;
+    }
+
+    // STUB
+    if (String(process.env.HELLOASSO_STUB).toLowerCase() === 'true') {
+      const result = String(process.env.HELLOASSO_STUB_RESULT || 'success').toLowerCase();
+      if (result === 'success') {
+        return res.json({
+          ok: true,
+          stub: true,
+          totalCents,
+          redirectUrl: `${basePath(req)}/stub-checkout?amount=${totalCents}&email=${encodeURIComponent(contactEmail||'')}`
+        });
+      } else {
+        return res.status(400).json({ error: 'stub_payment_failed' });
+      }
+    }
+
+    return res.status(501).json({ error: 'helloasso_not_wired_here' });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;

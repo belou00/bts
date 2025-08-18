@@ -8,8 +8,8 @@
 //
 // Effets : upsert des abonnés par email + mise à jour de previousSeasonSeats (nettoyé/dédupliqué).
 // Optionnel : vérifie que les seatId existent dans la collection "seats" pour la saison fournie.
+require('dotenv').config();
 
-require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 const fs = require('fs');
 const path = require('path');
 const mongoose = require('mongoose');

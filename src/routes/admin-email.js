@@ -1,4 +1,6 @@
 // src/routes/admin-email.js
+require('dotenv').config();
+
 const express = require('express');
 const { celebrate, Joi, Segments } = require('celebrate');
 const { requireAdmin } = require('../middlewares/authz');

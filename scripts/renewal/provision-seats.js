@@ -1,6 +1,7 @@
 // scripts/renewal/provision-seats.js
 // Usage: node scripts/renewal/provision-seats.js <seasonCode> [--venue=patinoire-blagnac] [--dry-run] [--verbose]
-require('dotenv').config({ path: require('path').join(__dirname, '..','..', '.env') });
+require('dotenv').config();
+
 const mongoose = require('mongoose');
 const Season = require('../../src/models/Season');
 const Subscriber = require('../../src/models/Subscriber');
