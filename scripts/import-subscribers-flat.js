@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * Import "flat" : 1 ligne = 1 siège.
  * Usage:
@@ -5,9 +6,10 @@
  *
  * Colonnes acceptées (insensibles à la casse) :
  *   firstName,lastName,email,phone,seasonCode,venueSlug,seatId|prefSeatId|seat,group
- * - Si group est vide → group = email
- * - Ajoute/Met à jour un Subscriber par (email + seatId) et ajoute le siège dans previousSeasonSeats
+ * - Si group est vide → groupKey = email (normalisé)
+ * - Upsert par (email, seasonCode, venueSlug, prefSeatId)
  */
+
 require('dotenv').config();
 
 const fs = require('fs');
@@ -15,6 +17,8 @@ const path = require('path');
 const readline = require('readline');
 const mongoose = require('mongoose');
 const Subscriber = require('../src/models/Subscriber');
+
+function die(msg) { console.error(msg); process.exit(1); }
 
 function parseArgs(argv) {
   const [,, csvPath, seasonCode, ...rest] = argv;
@@ -26,33 +30,77 @@ function parseArgs(argv) {
   return args;
 }
 
-function headersIndex(headerLine) {
-  const h = headerLine.split(',').map(x => x.trim().toLowerCase());
-  const idx = Object.fromEntries(h.map((k, i) => [k, i]));
-  function col(...names) {
+// ----- CSV helpers (delimiter auto + guillemets + BOM) -----
+function stripBOM(s){ return s ? s.replace(/^\uFEFF/, '') : s; }
+
+function detectDelimiter(line) {
+  let comma = 0, semi = 0, inQ = false;
+  for (let i=0;i<line.length;i++) {
+    const ch = line[i];
+    if (ch === '"') inQ = !inQ;
+    else if (!inQ) {
+      if (ch === ',') comma++;
+      else if (ch === ';') semi++;
+    }
+  }
+  return semi > comma ? ';' : ','; // défaut: virgule
+}
+
+function parseCSVLine(line, delim) {
+  const out = [];
+  let cur = '';
+  let inQuotes = false;
+
+  for (let i=0; i<line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (line[i+1] === '"') { cur += '"'; i++; }
+        else inQuotes = false;
+      } else {
+        cur += ch;
+      }
+    } else {
+      if (ch === '"') inQuotes = true;
+      else if (ch === delim) { out.push(cur); cur = ''; }
+      else cur += ch;
+    }
+  }
+  out.push(cur);
+  return out.map(s => s.trim());
+}
+
+// ----- Header mapping -----
+function headersIndex(headerLine, delim) {
+  const h = parseCSVLine(headerLine, delim).map(x => stripBOM(x).trim());
+  const lc = h.map(x => x.toLowerCase());
+  const idx = Object.fromEntries(lc.map((k,i) => [k, i]));
+
+  const pick = (...names) => {
     for (const n of names) {
       const key = String(n).toLowerCase();
       if (idx[key] != null) return idx[key];
     }
     return -1;
-  }
-  const firstName = col('firstname','first_name','prenom','first');
-  const lastName  = col('lastname','last_name','nom','last');
-  const email     = col('email','mail');
-  const phone     = col('phone','tel','telephone');
-  const seatId    = col('seatid','prefseatid','seat');
-  const group     = col('group','groupkey','groupe');
-  const seasonCol = col('seasoncode','season','saison');
-  const venueCol  = col('venueslug','venue','lieu');
+  };
+
+  const firstName = pick('firstname','first_name','prenom','first');
+  const lastName  = pick('lastname','last_name','nom','last');
+  const email     = pick('email','mail');
+  const phone     = pick('phone','tel','telephone');
+  const seatId    = pick('seatid','prefseatid','seat');
+  const group     = pick('group','groupkey','groupe');
+  const seasonCol = pick('seasoncode','season','saison');
+  const venueCol  = pick('venueslug','venue','lieu');
 
   const missing = [];
-  if (email < 0)   missing.push('email');
-  if (seatId < 0)  missing.push('seatId (ou prefSeatId)');
+  if (email  < 0) missing.push('email');
+  if (seatId < 0) missing.push('seatId (ou prefSeatId|seat)');
   if (missing.length) {
     throw new Error(`Colonnes manquantes: ${missing.join(', ')}. Vues: ${h.join(', ')}`);
   }
-  return { h, idx, firstName, lastName, email, phone, seatId, group, seasonCol, venueCol };
-
+  return { header: h, lc, firstName, lastName, email, phone, seatId, group, seasonCol, venueCol, delim };
+}
 
 function normGroupKey(v) {
   const s = String(v || '').trim().toLowerCase();
@@ -62,81 +110,85 @@ function normGroupKey(v) {
 (async () => {
   const { csvPath, seasonCode, venueSlug } = parseArgs(process.argv);
   if (!csvPath || !seasonCode) {
-    console.error('Usage: node scripts/import-subscribers-flat.js <csvPath> <seasonCode> --venue=<slug>');
-    process.exit(1);
+    die('Usage: node scripts/import-subscribers-flat.js <csvPath> <seasonCode> --venue=<slug>');
   }
 
-  const mongoUri = process.env.MONGO_URI;
+  const mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI;
+  if (!mongoUri) die('Missing MONGO_URI in .env');
 
   await mongoose.connect(mongoUri);
 
   const full = path.resolve(csvPath);
-  if (!fs.existsSync(full)) {
-    console.error('CSV not found:', full);
-    process.exit(1);
-  }
+  if (!fs.existsSync(full)) die(`CSV not found: ${full}`);
+
+  // Lire la 1ère ligne pour trouver le délimiteur
+  const firstLine = stripBOM(fs.readFileSync(full, 'utf8').split(/\r?\n/).find(l => l.trim().length));
+  if (!firstLine) die('CSV vide');
+  const delim = detectDelimiter(firstLine);
 
   const rl = readline.createInterface({ input: fs.createReadStream(full, 'utf8'), crlfDelay: Infinity });
 
-  let header = null, cols = null, scanned = 0, upserts = 0;
+  let header = null, cols = null, scanned = 0, upserts = 0, modified = 0, skipped = 0;
   for await (const raw of rl) {
     const line = raw.replace(/\r$/, '');
     if (!line.trim()) continue;
+
     if (!header) {
       header = line;
-      cols = headersIndex(header);
+      cols = headersIndex(header, delim);
       continue;
     }
+
     scanned++;
+    const cells = parseCSVLine(line, cols.delim);
+    const take = (i) => (i >= 0 ? (cells[i] || '').trim() : '');
 
-    const cells = line.split(',').map(x => x.trim());
-    const pick = (i) => (i >= 0 ? (cells[i] || '') : '');
-    const email = pick(cols.email);
-    const firstName = pick(cols.firstName);
-    const lastName  = pick(cols.lastName);
-    const phone     = pick(cols.phone);
-    const seatId    = pick(cols.seatId);
-    const groupRaw  = pick(cols.group);
-    const seasonCSV = pick(cols.seasonCol);
-    const venueCSV  = pick(cols.venueCol);
+    const email     = take(cols.email);
+    const firstName = take(cols.firstName);
+    const lastName  = take(cols.lastName);
+    const phone     = take(cols.phone);
+    const seatId    = take(cols.seatId);
+    const groupRaw  = take(cols.group);
+    const seasonCSV = take(cols.seasonCol);
+    const venueCSV  = take(cols.venueCol);
 
-    const season = seasonCSV || seasonCode; // priorité à l’argument
-    const venue  = venueCSV  || venueSlug;  // idem
+    const season = seasonCSV || seasonCode;
+    const venue  = venueCSV  || venueSlug;
 
     if (!email || !seatId) {
-      console.warn('SKIP ligne invalide (email/seatId manquant):', { email, seatId });
-      continue;
+      console.warn('SKIP email/seatId manquant:', { email, seatId });
+      skipped++; continue;
+    }
+    if (!venue) {
+      console.warn('SKIP venueSlug manquant (colonne venueSlug ou --venue= requis):', { email, seatId });
+      skipped++; continue;
     }
 
-// ...
-const group = groupRaw || email;
-const groupKey = normGroupKey(group);
+    const groupKey = normGroupKey(groupRaw || email);
 
-const update = {
-  firstName,
-  lastName,
-  email,
-  phone,
-  prefSeatId: seatId,
-  seasonCode: season,
-  venueSlug: venue,
-  groupKey,            // ← au lieu de "group"
-  status: 'invited',
-  $addToSet: { previousSeasonSeats: seatId }
-};
-// ...
+    const where = { email, seasonCode: season, venueSlug: venue, prefSeatId: seatId };
+    const update = {
+      firstName,
+      lastName,
+      email,
+      phone,
+      prefSeatId: seatId,
+      seasonCode: season,
+      venueSlug: venue,
+      groupKey,
+      status: 'invited',
+      $addToSet: { previousSeasonSeats: seatId }
+    };
 
-    // upsert par (email + prefSeatId) → 1 doc / siège / email
-    const where = { email, prefSeatId: seatId };
     const res = await Subscriber.updateOne(where, update, { upsert: true });
-    if (res.upsertedCount > 0 || res.modifiedCount > 0) upserts++;
+    if (res.upsertedCount > 0) upserts++;
+    else if (res.modifiedCount > 0) modified++;
   }
 
-  console.log(`Done. scanned=${scanned} upserts=${upserts}`);
+  console.log(`Done. scanned=${scanned} upserts=${upserts} modified=${modified} skipped=${skipped}`);
   await mongoose.disconnect();
 })().catch(async (e) => {
   console.error('ERROR', e);
   try { await mongoose.disconnect(); } catch {}
   process.exit(1);
 });
-}
