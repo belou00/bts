@@ -1,18 +1,88 @@
 // src/payments/helloasso.js
-// NOTE: stub prêt à connecter HelloAsso Checkout API.
-// createCheckout({order}) retourne une URL/ID de session ou charge un widget côté front.
+// STUB HelloAsso pour DEV + garde-fou "déjà renouvelé".
+// En PROD/SANDBOX: on laisse un fallback "not_implemented_here" (à remplacer par ton vrai flux HA).
 
-async function createCheckout({ order, returnUrl, cancelUrl }) {
-  // Ici: appeler l’API HelloAsso (OAuth2 client credentials) pour créer une session
-  // et enregistrer vos "installments" comme paiements programmés si supportés.
-  // DEV: on simule une URL de paiement.
-  const fakeSessionId = 'ha_sess_'+order.orderNo;
-  return { checkoutSessionId: fakeSessionId, checkoutUrl: `${returnUrl}?paid=fake` };
+const Order = require('../models/Order');
+const Seat = require('../models/Seat');
+const Subscriber = require('../models/Subscriber');
+const PaymentIntent = require('../models/PaymentIntent');
+
+function appUrl() {
+  return (process.env.APP_URL || 'http://localhost:8080').replace(/\/$/, '');
 }
 
-function verifyWebhookSignature(req) {
-  // TODO: implémenter vérification HELLOASSO_WEBHOOK_SECRET
-  return true;
+async function markSuccess({ seasonCode, venueSlug, groupKey, email, lines, totalCents, providerRef }) {
+  // Idempotence: si un order paid existe déjà, on renvoie ce "paid"
+  const exists = await Order.findOne({ seasonCode, venueSlug, groupKey, status: 'paid' }).lean();
+  if (exists) return exists;
+
+  const order = await Order.create({
+    seasonCode, venueSlug, groupKey, payerEmail: email,
+    lines, totalCents, status: 'paid',
+    paymentProvider: 'helloasso', providerRef
+  });
+
+  // Book seats + clear provision
+  const seatIds = lines.map(l => l.seatId);
+  await Seat.updateMany(
+    { seasonCode, venueSlug, seatId: { $in: seatIds } },
+    { $set: { status: 'booked', provisionedFor: null } }
+  );
+
+  // Activer les subscribers du groupe
+  await Subscriber.updateMany(
+    { seasonCode, venueSlug, groupKey },
+    { $set: { status: 'active' } }
+  );
+
+  return order;
 }
 
-module.exports = { createCheckout, verifyWebhookSignature };
+async function markFailure({ seasonCode, venueSlug, groupKey, email, lines, totalCents, providerRef }) {
+  return Order.create({
+    seasonCode, venueSlug, groupKey, payerEmail: email,
+    lines, totalCents, status: 'failed',
+    paymentProvider: 'helloasso', providerRef
+  });
+}
+
+async function checkout(payload) {
+  const {
+    seasonCode, venueSlug, groupKey, email,
+    lines, totalCents, installments = 1
+  } = payload;
+
+  // Anti double-commande côté paiement aussi
+  const already = await Order.exists({ seasonCode, venueSlug, groupKey, status: 'paid' });
+  if (already) return { error: 'already_renewed' };
+
+  const isStub = String(process.env.HELLOASSO_STUB || '').toLowerCase() === 'true';
+
+  // Enregistre un intent (utile aussi en stub pour logs)
+  const intent = await PaymentIntent.create({
+    seasonCode, venueSlug, groupKey, payerEmail: email,
+    lines, totalCents, provider: 'helloasso', installments,
+  });
+
+  if (isStub) {
+    const result = (process.env.HELLOASSO_STUB_RESULT || 'success').toLowerCase();
+    if (result === 'success') {
+      await markSuccess({ seasonCode, venueSlug, groupKey, email, lines, totalCents, providerRef: `stub:${intent._id}` });
+      return {
+        checkoutIntentId: String(intent._id),
+        redirectUrl: `${appUrl()}/ha/return?status=success&ref=${intent._id}`
+      };
+    } else {
+      await markFailure({ seasonCode, venueSlug, groupKey, email, lines, totalCents, providerRef: `stub:${intent._id}` });
+      return {
+        checkoutIntentId: String(intent._id),
+        redirectUrl: `${appUrl()}/ha/return?status=failure&ref=${intent._id}`
+      };
+    }
+  }
+
+  // VRAI HelloAsso (à brancher ici si besoin)
+  return { error: 'not_implemented_here' };
+}
+
+module.exports = { checkout };

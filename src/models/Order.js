@@ -1,43 +1,32 @@
 // src/models/Order.js
 const mongoose = require('mongoose');
 
-const OrderItemSchema = new mongoose.Schema({
-  kind: { type: String, enum: ['SEAT','STANDING'] },
-  seatId: String,             // si kind=SEAT
-  zoneKey: String,            // si kind=STANDING
-  quantity: { type: Number, default: 1 },
+const LineSchema = new mongoose.Schema({
+  seatId: String,
   tariffCode: String,
-  unitPriceCents: Number,
-  justification: String
-},{_id:false});
-
-const InstallmentSchema = new mongoose.Schema({
-  dueDate: Date,
-  amountCents: Number,
-  status: { type: String, enum: ['pending','paid','failed','canceled'], default: 'pending' },
-  helloAssoRef: String
-},{_id:false});
+  priceCents: Number,            // optionnel si tu stockes le détail
+  holderFirstName: String,       // optionnel (porteur de la place)
+  holderLastName: String,
+  justificationField: String,    // ex: Numéro INE / licence
+  info: String                   // info complémentaire
+}, { _id: false });
 
 const OrderSchema = new mongoose.Schema({
-  orderNo: { type: String, unique: true },
-  seasonCode: String,
-  phase: { type: String, enum: ['renewal','tbh7','public'] },
-  buyer: {
-    firstName: String, lastName: String, email: String, phone: String
-  },
-  items: [OrderItemSchema],
-  totals: {
-    subtotalCents: Number, discountCents: Number, totalCents: Number
-  },
-  installments: {
-    count: { type: Number, enum: [1,2,3], default: 1 },
-    schedule: [InstallmentSchema]
-  },
-  status: { type: String, enum: ['draft','pendingPayment','partial','paid','canceled'], default:'draft' },
-  helloAsso: {
-    checkoutSessionId: String
-  }
-},{timestamps:true});
+  seasonCode: { type: String, index: true },
+  venueSlug:  { type: String, index: true },
+  groupKey:   { type: String, index: true },
+  payerEmail: String,
+  lines: [LineSchema],
+  totalCents: Number,
+  status: { type: String, enum: ['pending','paid','failed'], default: 'pending', index: true },
+  paymentProvider: { type: String, default: 'helloasso' },
+  providerRef: String
+}, { timestamps: true });
 
-OrderSchema.index({ seasonCode:1, phase:1 });
+// Unicité logique : un seul "paid" par (season, venue, groupKey)
+OrderSchema.index(
+  { seasonCode: 1, venueSlug: 1, groupKey: 1, status: 1 },
+  { unique: true, partialFilterExpression: { status: 'paid' }, name: 'uniq_paid_per_group' }
+);
+
 module.exports = mongoose.model('Order', OrderSchema);

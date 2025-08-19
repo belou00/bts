@@ -5,10 +5,14 @@
 <body style="font-family:system-ui,Arial,sans-serif;padding:2rem">
   <h1>Retour paiement</h1>
   <p id="msg"></p>
+  <p><a href="/html/renew.html">Retour vers Renouvellement</a></p>
   <script>
-    const params = new URLSearchParams(location.search);
-    const status = params.get('status');
+    const p = new URLSearchParams(location.search);
+    const status = p.get('status');
+    const ref = p.get('ref');
     document.getElementById('msg').textContent =
-      status === 'success' ? 'Paiement simulé réussi (STUB).' : 'Paiement simulé échoué (STUB).';
+      status === 'success'
+        ? `Paiement simulé réussi (ref=${ref || 'n/a'}). Merci !`
+        : `Paiement simulé échoué (ref=${ref || 'n/a'}).`;
   </script>
 </body>
