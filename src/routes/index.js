@@ -1,27 +1,21 @@
 // src/routes/index.js
 const express = require('express');
+const path = require('path');
+const renew = require('./renew');
+const admin = require('./admin');
+
 const router = express.Router();
 
-const safeMount = (subpath) => {
-  try {
-    // eslint-disable-next-line import/no-dynamic-require, global-require
-    const r = require(subpath);
-    router.use(r);
-  } catch (e) {
-    if (e.code !== 'MODULE_NOT_FOUND') {
-      console.warn(`[routes] Impossible de monter ${subpath}:`, e.message);
-    }
-  }
-};
+// Health
+router.get('/health', (_req, res) => res.json({ ok: true }));
 
-safeMount('./renew');
-safeMount('./admin');
-safeMount('./admin-tariffs');         // prix par zone
-safeMount('./admin-tariff-catalog');  // <=== catalogue des tarifs
-safeMount('./payments');
-safeMount('./public');
-safeMount('./admin-email');
-safeMount('./payments-helloasso'); // ← checkout
-safeMount('./ha');                 // ← return/back/error
+// HelloAsso return (utile en STUB)
+router.get('/ha/return', (_req, res) => {
+  res.sendFile('ha-return.html', { root: path.join(__dirname, '..', 'public', 'html') });
+});
+
+// Routes métier
+router.use(renew);
+router.use('/admin', admin);
 
 module.exports = router;
