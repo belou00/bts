@@ -5,13 +5,18 @@ const http = require('http');
 const connectMongo = require('./loaders/mongo');
 const buildApp = require('./loaders/express');
 
+function defaultHost() {
+  const env = process.env.APP_ENV || process.env.NODE_ENV || 'development';
+  return env === 'development' ? '127.0.0.1' : '0.0.0.0';
+}
+
 async function start() {
   try {
     await connectMongo();
 
     const app = buildApp();
     const port = Number(process.env.PORT || 8080);
-    const host = process.env.HOST || '0.0.0.0'; // accessible depuis le réseau/VPS
+    const host = process.env.HOST || defaultHost();
 
     const server = http.createServer(app);
     server.listen(port, host, () => {

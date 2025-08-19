@@ -1,0 +1,14 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Retour paiement</title>
+<link rel="stylesheet" href="/static/styles/renew.css" />
+<body style="font-family:system-ui,Arial,sans-serif;padding:2rem">
+  <h1>Retour paiement</h1>
+  <p id="msg"></p>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const status = params.get('status');
+    document.getElementById('msg').textContent =
+      status === 'success' ? 'Paiement simulé réussi (STUB).' : 'Paiement simulé échoué (STUB).';
+  </script>
+</body>
