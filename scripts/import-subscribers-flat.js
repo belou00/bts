@@ -13,28 +13,6 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
-
-function loadEnv() {
-  const env = (process.env.APP_ENV || 'development').toLowerCase();
-  const candidates = [
-    process.env.DOTENV_PATH,
-    `.env.${env}`,
-    env === 'development' ? '.env.dev' : null,
-    '.env',
-  ].filter(Boolean);
-
-  for (const p of candidates) {
-    const abs = path.resolve(process.cwd(), p);
-    if (fs.existsSync(abs)) {
-      require('dotenv').config({ path: abs });
-      console.log(`[import-subscribers-flat] Loaded env file: ${p} (APP_ENV=${env})`);
-      return;
-    }
-  }
-  require('dotenv').config();
-}
-loadEnv();
-
 const mongoose = require('mongoose');
 const Subscriber = require('../src/models/Subscriber');
 
@@ -74,7 +52,7 @@ function headersIndex(headerLine) {
     throw new Error(`Colonnes manquantes: ${missing.join(', ')}. Vues: ${h.join(', ')}`);
   }
   return { h, idx, firstName, lastName, email, phone, seatId, group, seasonCol, venueCol };
-}
+
 
 function normGroupKey(v) {
   const s = String(v || '').trim().toLowerCase();
@@ -88,11 +66,7 @@ function normGroupKey(v) {
     process.exit(1);
   }
 
-  const env = (process.env.APP_ENV || 'development').toLowerCase();
-  const mongoUri =
-    env === 'production'  ? process.env.MONGO_URI_PROD :
-    env === 'integration' ? process.env.MONGO_URI_INT  :
-    (process.env.MONGO_URI_DEV || process.env.MONGO_URI || process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/bts');
+  const mongoUri = process.env.MONGO_URI;
 
   await mongoose.connect(mongoUri);
 
