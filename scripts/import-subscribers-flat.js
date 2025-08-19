@@ -139,3 +139,4 @@ const update = {
   try { await mongoose.disconnect(); } catch {}
   process.exit(1);
 });
+}
