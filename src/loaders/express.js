@@ -12,16 +12,14 @@ function buildApp() {
   const app = express();
 
   // Sécurité / parsing
+  // Helmet global par défaut
   app.use(helmet());
-  app.use(express.json({ limit: '1mb' }));
-  app.use(express.urlencoded({ extended: true }));
 
-  // CORS (autorise plusieurs origines séparées par des virgules si besoin)
-  const origins = (process.env.FRONTEND_ORIGIN || '').split(',')
-    .map(s => s.trim()).filter(Boolean);
-  app.use(cors({
-    origin: origins.length ? origins : true,
-    credentials: true,
+  // CSP spécifique pour /s/renew : autorise <object> local
+  const baseDirectives = helmet.contentSecurityPolicy.getDefaultDirectives();
+  const renewDirectives = { ...baseDirectives, "object-src": ["'self'"] };
+  app.use('/s/renew', helmet({
+    contentSecurityPolicy: { directives: renewDirectives }
   }));
 
   // Rate limit basique sur l'API publique
