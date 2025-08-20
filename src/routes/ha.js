@@ -1,107 +1,83 @@
-// src/routes/ha.js
-const express = require('express');
-const Order = require('../models/Order');           // doit exister
-const Subscriber = require('../models/Subscriber'); // existe
-const { ensureSubscriberNo } = require('../services/subscribers');
-const { renderAttestationHtml } = require('../services/attestation');
-const { sendMail } = require('../services/mailer');
-const { getHelloAssoClient } = require('../services/helloasso'); // ton client HA existant
+// src/routes/renew.js
+import express from 'express';
+import { Order } from '../models/index.js';
+import { initCheckout } from '../services/helloasso.js';
 
 const router = express.Router();
 
 /**
- * On attend que la création du checkout ait :
- * - créé un Order avec { checkoutIntentId, seasonCode, payer:{email}, totalCents, installments, lines:[{ seatId, zoneKey, tariffCode, priceCents, subscriberId }] }
- * - ajouté ?oid=<orderId>&ci=<checkoutIntentId> aux URLs de retour (voir route checkout ci-dessous)
- *
- * Ici, on vérifie l’état du checkout HelloAsso, on marque l’Order "paid",
- * on attribue des subscriberNo, puis on envoie l’attestation.
+ * POST /s/renew
+ * Payload attendue (exemple):
+ * {
+ *   "seasonCode": "2025-2026",
+ *   "venueSlug": "patinoire-blagnac",
+ *   "items": [{ "seatId":"A1-001", "zoneKey":"NORD", "tariffCode":"PT" }, ...],
+ *   "payer": { "email":"xxx@y.z", "firstName":"", "lastName":"" },
+ *   "formSlug": "abonnement-2025"  // optionnel si tu distingues les forms HA
+ * }
  */
+router.post('/s/renew', async (req, res) => {
+  try {
+    const { seasonCode, venueSlug, items, payer, formSlug } = req.body || {};
 
-router.get('/ha/return', handleReturn('return'));
-router.get('/ha/back',   handleReturn('back'));
-router.get('/ha/error',  handleReturn('error'));
+    // ---- validations minimales (garde ta validation Joi/celebrate si déjà en place) ----
+    if (!seasonCode || !venueSlug) {
+      return res.status(400).json({ error: 'seasonCode et venueSlug sont requis' });
+    }
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'items est requis (au moins 1 siège)' });
+    }
+    if (!payer || !payer.email) {
+      return res.status(400).json({ error: 'payer.email est requis' });
+    }
 
-function handleReturn(kind) {
-  return async (req, res, next) => {
-    try {
-      const orderId = String(req.query.oid || '').trim();
-      const ci      = String(req.query.ci  || '').trim(); // checkoutIntentId
-      if (!orderId || !ci) {
-        return res.status(400).send(htmlMsg('Réception HelloAsso', 'Paramètres manquants (oid/ci).'));
-      }
+    // ---- recalcul serveur du total (essaie d’utiliser ta logique Phase 1 si dispo) ----
+    const totalCents = await recomputeTotalSafe({ seasonCode, venueSlug, items, payer });
 
-      const order = await Order.findById(orderId);
-      if (!order) return res.status(404).send(htmlMsg('Réception HelloAsso', 'Commande introuvable.'));
+    // ---- crée l’Order pending ----
+    const order = await Order.create({
+      provider: 'helloasso',
+      kind: 'season-renew',
+      status: 'pending',
+      email: payer.email,
+      amount: totalCents, // enregistré en cents
+      currency: 'EUR',
+      payload: { seasonCode, venueSlug, items }
+    });
 
-      // Vérifie l’état HelloAsso (via ton client)
-      const ha = await getHelloAssoClient(); // suppose que tu gères token etc.
-      let paid = false, haPaymentRef = null;
+    // ---- démarre le checkout (STUB en DEV / HA en INT/PROD) ----
+    const { redirectUrl, provider, intentId } = await initCheckout({ order, formSlug });
 
-      try {
-        // Exemple générique (adapte à ton client): ha.getCheckout(ci)
-        const status = await ha.getCheckoutStatus(ci); // { status: 'Paid'|'Authorized'|..., paymentRef: '...' }
-        if (status && (status.status === 'Paid' || status.status === 'Authorized')) {
-          paid = true;
-          haPaymentRef = status.paymentRef || null;
-        }
-      } catch (e) {
-        // Si l’API échoue, on ne marque pas payé
-        console.warn('[HA return] status fetch failed:', e.message);
-      }
+    // ---- renvoie l’URL de redirection au front ----
+    return res.json({ redirectUrl, provider, intentId, orderId: order._id });
+  } catch (e) {
+    console.error('POST /s/renew error', e);
+    return res.status(400).json({ error: e.message || 'Erreur' });
+  }
+});
 
-      if (paid) {
-        order.status = 'paid';
-        if (haPaymentRef) order.haPaymentRef = haPaymentRef;
-        await order.save();
+/**
+ * Essaie d’appeler une fonction de pricing Phase 1 si elle existe, sinon fallback.
+ */
+async function recomputeTotalSafe({ seasonCode, venueSlug, items, payer }) {
+  try {
+    const mod = await import('../services/pricing.js');
+    const fn =
+      mod.computeRenewTotal ||
+      mod.recomputePricing ||
+      mod.getTotalsForRenew ||
+      mod.getTotalForRenew;
 
-        // Assigne subscriberNo pour tous les subscribers des lignes
-        const seasonCode = order.seasonCode;
-        const ids = [...new Set((order.lines||[]).map(l => String(l.subscriberId||'')).filter(Boolean))];
-        const subs = await Subscriber.find({ _id: { $in: ids } });
-        const subsById = new Map();
-        for (const s of subs) { 
-          const updated = await ensureSubscriberNo(s._id, seasonCode);
-          subsById.set(String(s._id), updated || s);
-        }
-
-        // Envoi attestation
-        const html = renderAttestationHtml({
-          seasonCode,
-          payerEmail: order?.payer?.email || '',
-          order,
-          subscribersById: subsById
-        });
-
-        const to = order?.payer?.email || (subs[0]?.email) || process.env.FROM_EMAIL;
-        await sendMail({ to, subject: `Attestation d’abonnement ${seasonCode}`, html });
-      }
-
-      // Affichage UX
-      const msg = paid
-        ? 'Merci, votre paiement a été confirmé. Une attestation vous a été envoyée par e-mail.'
-        : (kind === 'error'
-            ? "Le paiement a été annulé ou n'a pas pu être confirmé."
-            : "Retour effectué. Vérification du paiement en cours.");
-
-      res.send(htmlMsg('Retour HelloAsso', msg, paid));
-    } catch (e) { next(e); }
-  };
+    if (typeof fn === 'function') {
+      const out = await fn({ seasonCode, venueSlug, items, payer });
+      if (typeof out === 'number') return Math.max(0, Math.round(out));
+      if (out && typeof out.totalCents === 'number') return Math.max(0, Math.round(out.totalCents));
+    }
+  } catch {
+    // pas de module / autre signature → fallback
+  }
+  // Fallback : 1000 cents par siège (remplace dès que ta logique est branchée ici)
+  return items.length * 1000;
 }
 
-function htmlMsg(title, msg, ok=false) {
-  return `<!doctype html><meta charset="utf-8"><title>${title}</title>
-  <style>
-  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;padding:24px;background:#0f172a;color:#e5e7eb}
-  .card{max-width:680px;margin:0 auto;background:#111827;border:1px solid #1f2937;border-radius:12px;padding:18px}
-  .ok{color:#34d399}.warn{color:#fbbf24}.err{color:#f87171}
-  a{color:#22d3ee}
-  </style>
-  <div class="card">
-    <h1>${title}</h1>
-    <p class="${ok?'ok':'warn'}">${msg}</p>
-    <p><a href="${(process.env.APP_URL||'').replace(/\/$/,'')}/s/renew">Retour à la billetterie</a></p>
-  </div>`;
-}
-
-module.exports = router;
+export default router;

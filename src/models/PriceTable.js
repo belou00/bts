@@ -1,5 +1,6 @@
 // src/models/PriceTable.js
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
+
 const PriceSchema = new mongoose.Schema({
   code: { type: String, enum: ['ADULT','CHILD','TEEN_12_18','STUDENT','SENIOR','OTHER_REDUCED'] },
   label: String,
@@ -13,4 +14,4 @@ const PriceTableSchema = new mongoose.Schema({
   prices: [PriceSchema]
 }, { timestamps:true });
 
-module.exports = mongoose.model('PriceTable', PriceTableSchema);
+export const PriceTable = mongoose.models.PriceTable || mongoose.model('PriceTable', PriceTableSchema);

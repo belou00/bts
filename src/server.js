@@ -1,46 +1,23 @@
 // src/server.js
-require('dotenv').config();
+import mongoose from 'mongoose';
+import app, { BASE_PATH } from './loaders/express.js';
 
-const http = require('http');
-const connectMongo = require('./loaders/mongo');
-const buildApp = require('./loaders/express');
-
-function defaultHost() {
-  const env = process.env.APP_ENV || process.env.NODE_ENV || 'development';
-  return env === 'development' ? '127.0.0.1' : '0.0.0.0';
-}
+const APP_ENV = (process.env.APP_ENV || 'development').toLowerCase(); // development|integration|production
+const HOST = process.env.HOST || '127.0.0.1';
+const PORT = Number(process.env.PORT || (APP_ENV === 'development' ? 8080 : 8081));
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/bts';
 
 async function start() {
   try {
-    await connectMongo();
-
-    const app = buildApp();
-    const port = Number(process.env.PORT || 8080);
-    const host = process.env.HOST || defaultHost();
-
-    const server = http.createServer(app);
-    server.listen(port, host, () => {
-      console.log(`[BTS] API listening on http://${host}:${port}`);
+    await mongoose.connect(MONGO_URI, { autoIndex: APP_ENV !== 'production' });
+    app.listen(PORT, HOST, () => {
+      console.log(`[BTS] ${APP_ENV} listening on http://${HOST}:${PORT}${BASE_PATH}`);
     });
-
-    const shutdown = () => {
-      console.log('[BTS] Received shutdown signal, closing...');
-      server.close(() => process.exit(0));
-    };
-    process.on('SIGINT', shutdown);
-    process.on('SIGTERM', shutdown);
-
-    process.on('unhandledRejection', (err) => {
-      console.error('[BTS] UnhandledRejection:', err);
-    });
-    process.on('uncaughtException', (err) => {
-      console.error('[BTS] UncaughtException:', err);
-      process.exit(1);
-    });
-  } catch (err) {
-    console.error('Fatal start error', err);
+  } catch (e) {
+    console.error('Startup failure:', e);
     process.exit(1);
   }
 }
 
 start();
+export default app; // utile pour supertest

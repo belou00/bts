@@ -1,5 +1,5 @@
 // src/models/Order.js
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 
 const LineSchema = new mongoose.Schema({
   seatId: String,
@@ -29,4 +29,4 @@ OrderSchema.index(
   { unique: true, partialFilterExpression: { status: 'paid' }, name: 'uniq_paid_per_group' }
 );
 
-module.exports = mongoose.model('Order', OrderSchema);
+export const Order = mongoose.models.Order || mongoose.model('Order', OrderSchema);
