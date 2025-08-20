@@ -1,5 +1,6 @@
 // src/config/env.js
-require('dotenv').config();
+import dotenv from 'dotenv';
+dotenv.config();
 
 const fs = require('fs');
 const path = require('path');

@@ -1,8 +1,10 @@
 // src/routes/admin-tariff-catalog.js
-const express = require('express');
-const { celebrate, Joi, Segments } = require('celebrate');
-const Tariff = require('../models/Tariff');
-const { requireAdmin } = require('../middlewares/authz');
+import express from 'express';
+import { celebrate, Joi, Segments } from 'celebrate';
+
+import { Tariff } from '../models/Tariff.js';
+import { requireAdmin } from '../middlewares/authz.js';
+
 
 const router = express.Router();
 

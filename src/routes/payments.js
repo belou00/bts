@@ -1,10 +1,13 @@
 
-const router = require('express').Router();
-const { celebrate, Joi, Segments } = require('celebrate');
-const PaymentIntent = require('../models/PaymentIntent');
-const { initCheckoutIntent } = require('../services/helloasso');
-const { splitInstallmentAmounts } = require('../utils/money');
-const { getHelloAssoConfig } = require('../config/helloasso');
+import express from 'express';
+import { celebrate, Joi, Segments } from 'celebrate';
+
+import PaymentIntent from '../models/PaymentIntent.js';
+import { initCheckoutIntent } from '../services/helloasso.js';
+import { splitInstallmentAmounts } from '../utils/money.js';
+import { getHelloAssoConfig } from '../config/helloasso.js';
+
+const router = express.Router();
 
 function addMonthsISO(date, months) {
   const d = new Date(date);

@@ -1,9 +1,10 @@
 // src/routes/payments-helloasso.js
-const express = require('express');
-const { celebrate, Joi, Segments } = require('celebrate');
-const { getHelloAssoClient } = require('../services/helloasso');
-const Order = require('../models/Order');
-const SeatHold = require('../models/SeatHold');
+import express from 'express';
+import { celebrate, Joi, Segments } from 'celebrate';
+import { getHelloAssoClient } from '../services/helloasso.js';
+import { Order } from '../models/Order.js';
+import { SeatHold } from '../models/SeatHold.js';
+
 
 const router = express.Router();
 

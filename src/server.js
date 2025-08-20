@@ -1,23 +1,20 @@
 // src/server.js
-import mongoose from 'mongoose';
-import app, { BASE_PATH } from './loaders/express.js';
+import 'dotenv/config';
+import app from './loaders/express.js';
+import './loaders/mongo.js';
 
-const APP_ENV = (process.env.APP_ENV || 'development').toLowerCase(); // development|integration|production
 const HOST = process.env.HOST || '127.0.0.1';
-const PORT = Number(process.env.PORT || (APP_ENV === 'development' ? 8080 : 8081));
-const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/bts';
-
-async function start() {
+const PORT = parseInt(process.env.PORT || '8080', 10);
+const basePath = (() => {
   try {
-    await mongoose.connect(MONGO_URI, { autoIndex: APP_ENV !== 'production' });
-    app.listen(PORT, HOST, () => {
-      console.log(`[BTS] ${APP_ENV} listening on http://${HOST}:${PORT}${BASE_PATH}`);
-    });
-  } catch (e) {
-    console.error('Startup failure:', e);
-    process.exit(1);
+    const u = new URL(process.env.APP_URL || 'http://localhost:8080/bts');
+    return u.pathname.endsWith('/') ? u.pathname.slice(0, -1) : u.pathname;
+  } catch {
+    return '/bts';
   }
-}
+})();
 
-start();
-export default app; // utile pour supertest
+app.listen(PORT, HOST, () => {
+  console.log(`[bts] listening on http://${HOST}:${PORT}${basePath} (env=${process.env.APP_ENV || 'development'})`);
+  console.log(`[bts] MONGO_URI=${process.env.MONGO_URI || '(default) mongodb://127.0.0.1:27017/bts'}`);
+});

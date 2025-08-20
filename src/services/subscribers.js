@@ -1,6 +1,7 @@
 // src/services/subscribers.js
-const Counter = require('../models/Counter');
-const Subscriber = require('../models/Subscriber');
+import { Counter } from '../models/Counter.js';
+import { Subscriber } from '../models/Subscriber.js';
+
 
 async function nextSeq(key) {
   const doc = await Counter.findOneAndUpdate(

@@ -1,13 +1,16 @@
 
-const router = require('express').Router();
-const Seat = require('../models/Seat');
-const Zone = require('../models/Zone');
-const Order = require('../models/Order');
-const { splitInstallments } = require('../utils/money');
-const { orderNo } = require('../utils/ids');
-const { priceForLine, needJustification } = require('../utils/pricing');
-const { holdSeat } = require('../controllers/seat');
-const { checkPhase } = require('../middlewares/phase');
+import express from 'express';
+
+import Seat from '../models/Seat.js';
+import Zone from '../models/Zone.js';
+import Order from '../models/Order.js';
+import { splitInstallments } from '../utils/money.js';
+import { orderNo } from '../utils/ids.js';
+import { priceForLine, needJustification } from '../utils/pricing.js';
+import { holdSeat } from '../controllers/seat.js';
+import { checkPhase } from '../middlewares/phase.js';
+
+const router = express.Router();
 
 router.get('/seats', async (req,res,next)=>{
   try{

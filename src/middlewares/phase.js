@@ -1,4 +1,4 @@
-const Season = require('../models/Season');
+import { Season } from '../models/Season.js';
 
 function checkPhase(phaseName) {
   return async function (req, res, next) {

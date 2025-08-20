@@ -1,5 +1,5 @@
 // src/services/mailer.js
-const { getTransporter } = require('../loaders/mailer');
+import { getTransporter } from '../loaders/mailer.js';
 
 function fromAddress() {
   const addr = process.env.FROM_EMAIL || process.env.GMAIL_USER;

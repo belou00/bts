@@ -1,7 +1,10 @@
 // src/routes/stub.js
-require('dotenv').config();
 
-const express = require('express');
+import express from 'express';
+
+import dotenv from 'dotenv';
+dotenv.config();
+
 const router = express.Router();
 
 function isStubEnabled() {

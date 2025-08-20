@@ -1,8 +1,9 @@
 // src/routes/index.js
-const express = require('express');
-const path = require('path');
-const renew = require('./renew');
-const admin = require('./admin');
+import express from 'express';
+import path from 'path';
+
+import renew from './renew.js';
+import admin from './admin.js';
 
 const router = express.Router();
 
