@@ -1,24 +1,23 @@
 // src/services/helloasso.js
 import fetch from 'node-fetch';
 
-const ENV = process.env.APP_ENV || 'development';
+const ENV = (process.env.APP_ENV || 'development').toLowerCase();
 const STUB = String(process.env.HELLOASSO_STUB || 'false').toLowerCase() === 'true';
 const STUB_RESULT = (process.env.HELLOASSO_STUB_RESULT || 'success').toLowerCase();
 
 const HELLOASSO_ENV = (process.env.HELLOASSO_ENV || 'sandbox').toLowerCase(); // sandbox|production
 const ORG_SLUG = process.env.HELLOASSO_ORG_SLUG || '';
-const RETURN_URL = process.env.HELLOASSO_RETURN_URL || ''; // ex: https://.../bts/ha/return
+const RETURN_URL = process.env.HELLOASSO_RETURN_URL || '';
 
-// Credentials sandbox / production (Phase 1 + fallback)
 const CLIENT_ID =
   HELLOASSO_ENV === 'production'
-    ? (process.env.HELLOASSO_CLIENT_ID_PRODUCTION || process.env.HELLOASSO_CLIENT_ID || '')
-    : (process.env.HELLOASSO_CLIENT_ID_SANDBOX   || process.env.HELLOASSO_CLIENT_ID || '');
+    ? (process.env.HELLOASSO_CLIENT_ID || '')
+    : (process.env.HELLOASSO_CLIENT_ID_SANDBOX || '');
 
 const CLIENT_SECRET =
   HELLOASSO_ENV === 'production'
-    ? (process.env.HELLOASSO_CLIENT_SECRET_PRODUCTION || process.env.HELLOASSO_CLIENT_SECRET || '')
-    : (process.env.HELLOASSO_CLIENT_SECRET_SANDBOX   || process.env.HELLOASSO_CLIENT_SECRET || '');
+    ? (process.env.HELLOASSO_CLIENT_SECRET || '')
+    : (process.env.HELLOASSO_CLIENT_SECRET_SANDBOX || '');
 
 const API_BASE = 'https://api.helloasso.com/v5';
 
@@ -50,16 +49,13 @@ async function getAccessToken() {
 }
 
 /**
- * Démarre un paiement ou renvoie une URL STUB en DEV.
  * @param {Object} params
- * @param {Object} params.order - Order mongoose ({ _id, amount/totalCents, kind, ... })
- * @param {string} params.formSlug - slug de formulaire HelloAsso (phase 1 tu l’avais côté route)
- * @returns {Promise<{redirectUrl: string, provider: 'stub'|'helloasso', intentId?: string}>}
+ * @param {Object} params.order - {_id, totalCents, kind, ...}
+ * @param {string} [params.formSlug]
  */
 export async function initCheckout({ order, formSlug }) {
   if (!order) throw new Error('order requis');
 
-  // Mode STUB → on renvoie directement l’URL de retour (côté front: redirection immédiate)
   if (STUB) {
     const res = STUB_RESULT === 'failure' ? 'failure' : 'success';
     if (!RETURN_URL) throw new Error('HELLOASSO_RETURN_URL manquant pour le STUB');
@@ -67,14 +63,12 @@ export async function initCheckout({ order, formSlug }) {
     return { redirectUrl: url, provider: 'stub' };
   }
 
-  // INT/PROD → vrai checkout-intent
   const token = await getAccessToken();
 
   const returnUrl = `${RETURN_URL}?oid=${encodeURIComponent(order._id)}`;
   const backUrl   = returnUrl.replace('/ha/return', '/ha/back');
   const errorUrl  = returnUrl.replace('/ha/return', '/ha/error');
 
-  // total en cents (Phase 1: amount stocké en cents)
   const totalCents = Math.round(order.totalCents || order.amount || 0);
   const payload = {
     totalAmount: totalCents,
@@ -82,7 +76,6 @@ export async function initCheckout({ order, formSlug }) {
     metadata: { kind: order.kind || 'season-renew', orderId: String(order._id), env: ENV }
   };
 
-  // formSlug peut être transmis par la route (cas : form d’adhésion vs abonnement)
   const url = `${API_BASE}/organizations/${ORG_SLUG}/forms/${formSlug || 'checkout'}/checkout-intents`;
   const res = await fetch(url, {
     method: 'POST',

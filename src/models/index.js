@@ -1,6 +1,5 @@
 // ⚠️ FICHIER UNIQUE D’AGRÉGATION — imports nommés pour tous les modèles
 export { Campaign }      from './Campaign.js';
-export { PriceTable }    from './PriceTable.js';
 export { SeatHold }      from './SeatHold.js';
 export { Tariff }        from './Tariff.js';
 export { Zone }          from './Zone.js';

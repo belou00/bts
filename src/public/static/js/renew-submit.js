@@ -12,41 +12,34 @@
     $btn.disabled = true;
 
     try{
-      // season & venue depuis la page
       const seasonCode = (document.getElementById('seasonLabel')?.textContent || '').trim() || '2025-2026';
       const planData = document.getElementById('planObject')?.getAttribute('data') || '';
-      const m = /\\/venues\\/([^/]+)\\/plan\\.svg$/.exec(planData);
+      const m = /\/venues\/([^/]+)\/plan\.svg$/.exec(planData);
       const venueSlug = m ? m[1] : 'patinoire-blagnac';
 
-      // payer
       const payerEmail = (document.getElementById('orderEmail')?.value || '').trim();
       if (!payerEmail) throw new Error('Merci de renseigner l’email de la commande.');
 
-      // items depuis les “rows”
       const rows = Array.from(document.querySelectorAll('#participants .row[data-seat]'));
       if (!rows.length) throw new Error('Aucune ligne participant / place sélectionnée.');
 
       const items = rows.map(r => {
         const seatId = r.getAttribute('data-seat');
         const zoneKey = zoneFromSeatId(seatId);
-        const tariffSel = r.querySelector('select[data-name=\"tariff\"]');
-        const justifInp = r.querySelector('input[data-name=\"fieldValue\"]');
-        const firstName = r.querySelector('input[data-name=\"firstName\"]')?.value || '';
-        const lastName  = r.querySelector('input[data-name=\"lastName\"]')?.value || '';
+        const tariffSel = r.querySelector('select[data-name="tariff"]');
+        const justifInp = r.querySelector('input[data-name="fieldValue"]');
+        const firstName = r.querySelector('input[data-name="firstName"]')?.value || '';
+        const lastName  = r.querySelector('input[data-name="lastName"]')?.value || '';
         return {
           seatId,
           zoneKey,
-          tariffCode: (tariffSel?.value || 'NORMAL').trim().toUpperCase(),
+          tariffCode: (tariffSel?.value || 'ADULT').trim().toUpperCase(),
           justification: justifInp?.value || '',
           firstName, lastName
         };
       });
 
-      const payload = {
-        seasonCode, venueSlug,
-        items,
-        payer: { email: payerEmail }
-      };
+      const payload = { seasonCode, venueSlug, items, payer: { email: payerEmail } };
 
       const res = await fetch('/s/renew', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
       if (!res.ok) throw new Error(await res.text() || `HTTP ${res.status}`);
