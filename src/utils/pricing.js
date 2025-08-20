@@ -1,118 +1,70 @@
-// src/utils/pricing.js
-// Tarifs: catalogue en DB (Tariff) avec fallback par défaut.
-// Prix: table TariffPrice (par zone/saison/lieu) avec fallback par défaut.
-// CommonJS.
+// src/utils/pricing.js  (ESM)
+import { Tariff, TariffPrice } from '../models/index.js';
 
-const TariffModel = require('../models/Tariff');
-const TariffPrice = require('../models/TariffPrice');
+/**
+ * Retourne le catalogue des tarifs (depuis la DB).
+ * Fallback sur un petit catalogue si la DB est vide.
+ */
+export async function getTariffCatalog() {
+  const rows = await Tariff.find({ active: { $ne: false } })
+    .sort({ order: 1, code: 1 })
+    .lean()
+    .catch(() => []);
+  if (rows && rows.length) return rows;
+  return getTariffCatalogSync();
+}
 
-// ---- Fallback (si DB vide) ----
-const DEFAULT_TARIFFS = [
-  { code: 'NORMAL',             label: 'Tarif normal' },
-  { code: 'ETUDIANT',           label: 'Tarif étudiant',           requiresField: 'ine',     fieldLabel: 'Numéro INE',       requiresInfo: 'Carte étudiant à présenter' },
-  { code: 'TEEN_12_17',         label: '12–17 ans',                requiresInfo: 'Pièce d’identité à présenter' },
-  { code: 'UNDER_12',           label: 'Moins de 12 ans',          requiresInfo: 'Pièce d’identité à présenter' },
-  { code: 'CLUB_LICENCE_ADULT', label: 'Club – licencié majeur',   requiresField: 'licence', fieldLabel: 'Numéro de licence' },
-  { code: 'CLUB_LICENCE_MINOR', label: 'Club – licencié mineur',   requiresField: 'licence', fieldLabel: 'Numéro de licence' },
-  { code: 'CLUB_PARENT',        label: 'Club – parent de licencié',requiresField: 'licence', fieldLabel: 'Numéro de licence', requiresInfo: 'valable pour 2 places maximum' }
-];
+/**
+ * Fallback synchrone minimal (utile en DEV si pas de données).
+ */
+export function getTariffCatalogSync() {
+  return [
+    { code: 'NORMAL', label: 'Plein tarif', active: true, order: 10 },
+    { code: 'REDUIT', label: 'Tarif réduit', active: true, order: 20 },
+  ];
+}
 
-const DEFAULT_BASE_PRICES = {
-  NORMAL: 18000,
-  ETUDIANT: 15000,
-  TEEN_12_17: 14000,
-  UNDER_12: 10000,
-  CLUB_LICENCE_ADULT: 15000,
-  CLUB_LICENCE_MINOR: 12000,
-  CLUB_PARENT: 16000
-};
-
-// --- CATALOGUE ---
-
-/** Retourne le catalogue DB (actifs), ou fallback si vide. */
-async function getTariffCatalog() {
-  try {
-    const docs = await TariffModel.find({ active: true }).sort({ sortOrder: 1, label: 1 }).lean();
-    if (docs && docs.length) {
-      return docs.map(d => ({
-        code: d.code,
-        label: d.label,
-        requiresField: d.requiresField || null,
-        fieldLabel: d.fieldLabel || null,
-        requiresInfo: d.requiresInfo || null
-      }));
-    }
-  } catch (e) {
-    // ignore -> fallback
+/**
+ * Construit une table de prix { zoneKey: { tariffCode: priceCents } }
+ * à partir de la collection TariffPrice pour une saison/lieu.
+ * Ajoute éventuellement une zone wildcard '*' si définie en base.
+ */
+export async function getZonePriceTable({ seasonCode, venueSlug }) {
+  const out = {};
+  const rows = await TariffPrice.find({ seasonCode, venueSlug }).lean().catch(() => []);
+  for (const r of rows) {
+    const z = r.zoneKey || '*';
+    const t = (r.tariffCode || 'NORMAL').toUpperCase();
+    const p = Number(r.priceCents || r.price || 0);
+    if (!out[z]) out[z] = {};
+    out[z][t] = p;
   }
-  return DEFAULT_TARIFFS;
+  return out;
 }
 
-/** Fallback synchrone (utile en cas d’appel sans DB) */
-function getTariffCatalogSync() {
-  return DEFAULT_TARIFFS;
-}
-
-/** Vérifie si un code nécessite une justification selon un catalogue donné */
-function requiresJustifFromCatalog(catalog, code) {
-  const c = String(code || '').trim().toUpperCase();
-  const t = (catalog || []).find(x => x.code === c);
-  return !!(t && (t.requiresField || t.requiresInfo));
-}
-
-/** Fallback synchrone (depuis DEFAULT_TARIFFS) */
-function needJustification(tariffCode) {
-  return requiresJustifFromCatalog(DEFAULT_TARIFFS, tariffCode);
-}
-
-// --- PRIX ---
-
-function asMapByZone(docs) {
-  const map = {};
-  for (const d of docs) {
-    if (!map[d.zoneKey]) map[d.zoneKey] = {};
-    map[d.zoneKey][d.tariffCode] = d.priceCents;
+/**
+ * Calcule le total (en cents) pour une liste de lignes [{zoneKey, tariffCode}, ...]
+ * en s’appuyant sur la table de prix. Utilise la zone '*' si pas de match précis.
+ */
+export async function computeSubscriptionPriceCents(lines, { seasonCode, venueSlug }) {
+  const table = await getZonePriceTable({ seasonCode, venueSlug });
+  let total = 0;
+  for (const it of lines) {
+    const z = (it.zoneKey || '*').toString();
+    const t = (it.tariffCode || 'NORMAL').toUpperCase();
+    const price =
+      (table[z] && table[z][t] != null ? table[z][t] : null) ??
+      (table['*'] && table['*'][t] != null ? table['*'][t] : null) ??
+      0;
+    total += Number(price) || 0;
   }
-  return map;
+  return total;
 }
 
-/** Table des prix par zone depuis la DB ; fallback sur DEFAULT_BASE_PRICES. */
-async function getZonePriceTable(opts = {}) {
-  const { seasonCode = null, venueSlug = null } = opts;
-  if (seasonCode && venueSlug) {
-    const docs = await TariffPrice.find({ seasonCode, venueSlug }).lean();
-    if (docs && docs.length) {
-      const byZone = asMapByZone(docs);
-      return { '*': { ...DEFAULT_BASE_PRICES }, ...byZone };
-    }
-  }
-  return { '*': { ...DEFAULT_BASE_PRICES } };
-}
-
-/** Somme en centimes pour des lignes [{ zoneKey, tariffCode }] selon la table de prix. */
-async function computeSubscriptionPriceCents(lines, opts = {}) {
-  const table = await getZonePriceTable(opts);
-  let sum = 0;
-  for (const ln of lines || []) {
-    const zoneKey = ln.zoneKey || '*';
-    const zoneMap = table[zoneKey] || table['*'] || {};
-    const p = zoneMap[String(ln.tariffCode).trim().toUpperCase()];
-    if (typeof p !== 'number') {
-      throw new Error(`No price for ${ln.tariffCode} in zone ${zoneKey}`);
-    }
-    sum += p;
-  }
-  return sum;
-}
-
-module.exports = {
-  // Catalog
+// (optionnel) export par défaut pour usage "import pricing from ..."
+export default {
   getTariffCatalog,
   getTariffCatalogSync,
-  requiresJustifFromCatalog,
-  needJustification,
-  // Prices
   getZonePriceTable,
-  computeSubscriptionPriceCents
+  computeSubscriptionPriceCents,
 };
-

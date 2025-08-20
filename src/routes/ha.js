@@ -1,83 +1,64 @@
-// src/routes/renew.js
+// src/routes/ha.js
 import express from 'express';
 import { Order } from '../models/index.js';
-import { initCheckout } from '../services/helloasso.js';
+import { getCheckoutStatus } from '../services/helloasso.js';
+import { sendMail } from '../loaders/mailer.js';
 
 const router = express.Router();
 
 /**
- * POST /s/renew
- * Payload attendue (exemple):
- * {
- *   "seasonCode": "2025-2026",
- *   "venueSlug": "patinoire-blagnac",
- *   "items": [{ "seatId":"A1-001", "zoneKey":"NORD", "tariffCode":"PT" }, ...],
- *   "payer": { "email":"xxx@y.z", "firstName":"", "lastName":"" },
- *   "formSlug": "abonnement-2025"  // optionnel si tu distingues les forms HA
- * }
+ * GET /ha/return
+ * Query: ?oid=<orderId>&ci=<intentId> (&stub=1&result=success|failure)
  */
-router.post('/s/renew', async (req, res) => {
+router.get('/ha/return', async (req, res) => {
   try {
-    const { seasonCode, venueSlug, items, payer, formSlug } = req.body || {};
+    const { oid, ci, stub, result } = req.query;
+    const order = await Order.findById(oid);
+    if (!order) return res.status(404).send('Order not found');
 
-    // ---- validations minimales (garde ta validation Joi/celebrate si déjà en place) ----
-    if (!seasonCode || !venueSlug) {
-      return res.status(400).json({ error: 'seasonCode et venueSlug sont requis' });
-    }
-    if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ error: 'items est requis (au moins 1 siège)' });
-    }
-    if (!payer || !payer.email) {
-      return res.status(400).json({ error: 'payer.email est requis' });
+    let status;
+    if (stub === '1' || result) {
+      status = (String(result || 'success').toLowerCase() === 'success') ? 'Paid' : 'Failed';
+    } else {
+      status = await getCheckoutStatus(ci);
     }
 
-    // ---- recalcul serveur du total (essaie d’utiliser ta logique Phase 1 si dispo) ----
-    const totalCents = await recomputeTotalSafe({ seasonCode, venueSlug, items, payer });
+    if (/paid|authorized|ok|success/i.test(status)) {
+      order.status = 'paid';
+      if (ci) order.providerRef = String(ci);
+      await order.save();
 
-    // ---- crée l’Order pending ----
-    const order = await Order.create({
-      provider: 'helloasso',
-      kind: 'season-renew',
-      status: 'pending',
-      email: payer.email,
-      amount: totalCents, // enregistré en cents
-      currency: 'EUR',
-      payload: { seasonCode, venueSlug, items }
-    });
+      // Email attestation (STUB écrit un .eml si EMAIL_STUB=true)
+      try {
+        await sendMail({
+          to: order.payerEmail || order.email || 'noreply@localhost',
+          subject: 'Confirmation de paiement - Abonnement',
+          text: `Votre commande ${order._id} a été confirmée.`,
+          html: `<p>Bonjour,</p><p>Votre commande <b>${order._id}</b> a été confirmée ✅.</p>`
+        });
+      } catch (e) {
+        console.warn('sendMail failed:', e.message);
+      }
 
-    // ---- démarre le checkout (STUB en DEV / HA en INT/PROD) ----
-    const { redirectUrl, provider, intentId } = await initCheckout({ order, formSlug });
-
-    // ---- renvoie l’URL de redirection au front ----
-    return res.json({ redirectUrl, provider, intentId, orderId: order._id });
+      return res.send(`<h1>Paiement confirmé ✅</h1><p>Commande ${order._id}</p>`);
+    } else {
+      order.status = 'failed';
+      if (ci) order.providerRef = String(ci);
+      await order.save();
+      return res.send(`<h1>Paiement non confirmé ❌</h1><p>Commande ${order._id} — statut: ${status}</p>`);
+    }
   } catch (e) {
-    console.error('POST /s/renew error', e);
-    return res.status(400).json({ error: e.message || 'Erreur' });
+    console.error('/ha/return error', e);
+    res.status(500).send('Erreur interne');
   }
 });
 
-/**
- * Essaie d’appeler une fonction de pricing Phase 1 si elle existe, sinon fallback.
- */
-async function recomputeTotalSafe({ seasonCode, venueSlug, items, payer }) {
-  try {
-    const mod = await import('../services/pricing.js');
-    const fn =
-      mod.computeRenewTotal ||
-      mod.recomputePricing ||
-      mod.getTotalsForRenew ||
-      mod.getTotalForRenew;
+router.get('/ha/back', (_req, res) => {
+  res.send('<h1>Paiement abandonné</h1><p>Vous pouvez reprendre votre commande ultérieurement.</p>');
+});
 
-    if (typeof fn === 'function') {
-      const out = await fn({ seasonCode, venueSlug, items, payer });
-      if (typeof out === 'number') return Math.max(0, Math.round(out));
-      if (out && typeof out.totalCents === 'number') return Math.max(0, Math.round(out.totalCents));
-    }
-  } catch {
-    // pas de module / autre signature → fallback
-  }
-  // Fallback : 1000 cents par siège (remplace dès que ta logique est branchée ici)
-  return items.length * 1000;
-}
+router.get('/ha/error', (_req, res) => {
+  res.status(400).send('<h1>Erreur de paiement</h1><p>Une erreur est survenue. Réessayez plus tard.</p>');
+});
 
 export default router;

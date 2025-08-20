@@ -2,14 +2,17 @@
 // scripts/export-renew-groups.js
 // Usage:
 //  node scripts/export-renew-groups.js <seasonCode> --venue=<slug> --base=<baseUrl> --out=<file.csv> [--expDays=30] [--debug]
-require('dotenv').config();
-const fs = require('fs');
-const path = require('path');
-const jwt = require('jsonwebtoken');
-const mongoose = require('mongoose');
 
-const Subscriber = require('../src/models/Subscriber');
-const Seat = require('../src/models/Seat');
+import fs from 'fs';
+import path from 'path';
+import jwt from 'jsonwebtoken';
+import mongoose from 'mongoose';
+
+import { Subscriber } from '../src/models/Subscriber.js';
+import { Seat } from '../src/models/Seat.js';
+
+import dotenv from 'dotenv';
+dotenv.config();
 
 function arg(name, def=null) {
   const hit = process.argv.find(x => x.startsWith(`--${name}=`));

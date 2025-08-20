@@ -1,11 +1,13 @@
-require('dotenv').config();
 
-const fs = require('fs');
-const path = require('path');
-const cheerio = require('cheerio');
+import fs from 'fs';
+import path from 'path';
+import cheerio from 'cheerio';
+import mongoose from 'mongoose';
 
-const mongoose = require('mongoose');
-const SeatCatalog = require('../../src/models/SeatCatalog');
+import { SeatCatalog } from '../../src/models/SeatCatalog.js';
+
+import dotenv from 'dotenv';
+dotenv.config();
 
 (async () => {
   const [venueSlug, svgFile] = process.argv.slice(2);
