@@ -6,4 +6,4 @@
 .ha-token.json
 node_modules
 .~lock.*
-
+.outbox

@@ -1,22 +1,15 @@
 // src/routes/index.js
 import express from 'express';
-import path from 'path';
-
-import renew from './renew.js';
-import admin from './admin.js';
+import renewRoutes from './renew.js';
+import haRoutes from './ha.js';
 
 const router = express.Router();
 
-// Health
-router.get('/health', (_req, res) => res.json({ ok: true }));
+// Endpoints “renew” et HelloAsso
+router.use('/', renewRoutes);
+router.use('/', haRoutes);
 
-// HelloAsso return (utile en STUB)
-router.get('/ha/return', (_req, res) => {
-  res.sendFile('ha-return.html', { root: path.join(__dirname, '..', 'public', 'html') });
-});
+// petite racine
+router.get('/', (_req, res) => res.json({ app: 'BTS API', ok: true }));
 
-// Routes métier
-router.use(renew);
-router.use('/admin', admin);
-
-module.exports = router;
+export default router;

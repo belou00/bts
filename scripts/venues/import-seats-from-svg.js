@@ -29,7 +29,7 @@ dotenv.config();
     const seatId = $(el).attr('data-seat-id')?.trim();
     if (!seatId) return;
     const zoneAttr = $(el).attr('data-zone')?.trim();
-    const zoneKey = zoneAttr || (seatId.split('-')[0].replace(/[0-9]/g,'') || 'Z');
+    const zoneKey = zoneAttr || (seatId.split('-')[0] || 'Z');
     const row = $(el).attr('data-row')?.trim() || '';
     const number = $(el).attr('data-number')?.trim() || '';
     const selector = `[data-seat-id="${seatId.replace(/"/g,'&quot;')}"]`;

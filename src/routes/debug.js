@@ -7,7 +7,6 @@ const router = express.Router();
 function seasonVenueFilter({ seasonCode, venueSlug }) {
   const season = String(seasonCode || '').trim();
   const venue  = String(venueSlug  || '').trim();
-
   const clauses = [];
   if (season && venue) {
     clauses.push(
@@ -24,10 +23,7 @@ function seasonVenueFilter({ seasonCode, venueSlug }) {
   return clauses.length ? { $or: clauses } : {};
 }
 
-/**
- * GET /debug/renew-scan?season=YYYY-YYYY&venue=slug
- * Retourne counts + un échantillon
- */
+// --- renew scan
 router.get('/debug/renew-scan', async (req, res) => {
   try {
     const seasonCode = req.query.season || '2025-2026';
@@ -52,6 +48,25 @@ router.get('/debug/renew-scan', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message || 'error' });
   }
+});
+
+// --- helloasso config (sans secrets)
+router.get('/debug/ha-config', (req, res) => {
+  const haEnv = (process.env.HELLOASSO_ENV || 'sandbox').toLowerCase();
+  const apiHost = (process.env.HELLOASSO_API_URL || '').trim()
+    || (haEnv === 'production'
+        ? 'https://api.helloasso.com'
+        : 'https://api.helloasso-sandbox.com');
+  const mask = (s) => s ? `${s.slice(0,4)}…${s.slice(-4)}` : '(unset)';
+  res.json({
+    env: process.env.APP_ENV || 'development',
+    haEnv,
+    apiHost,
+    orgSlug: process.env.HELLOASSO_ORG_SLUG || '(unset)',
+    returnUrl: process.env.HELLOASSO_RETURN_URL || '(unset)',
+    clientId: mask(process.env.HELLOASSO_CLIENT_ID || ''),
+    hasClientSecret: !!(process.env.HELLOASSO_CLIENT_SECRET && process.env.HELLOASSO_CLIENT_SECRET.length)
+  });
 });
 
 export default router;

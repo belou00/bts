@@ -1,51 +1,51 @@
-// src/loaders/express.js
+// src/loaders/express.js (rappel)
 import express from 'express';
+import compression from 'compression';
+import cors from 'cors';
+import helmet from 'helmet';
+import morgan from 'morgan';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import helmet from 'helmet';
-import cors from 'cors';
-import morgan from 'morgan';
-import compression from 'compression';
-
-import renewRouter from '../routes/renew.js';
-import haRouter from '../routes/ha.js';
-import debugRouter from '../routes/debug.js';
+import routes from '../routes/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __dirname  = path.dirname(__filename);
 
-const app = express();
+export default function initExpress(app) {
+  app.disable('x-powered-by');
 
-// Base path from APP_URL (default /bts)
-const basePath = (() => {
-  try {
-    const u = new URL(process.env.APP_URL || 'http://localhost:8080/bts');
-    return u.pathname.endsWith('/') ? u.pathname.slice(0, -1) : u.pathname;
-  } catch {
-    return '/bts';
-  }
-})();
+  app.use(morgan(process.env.APP_ENV === 'production' ? 'combined' : 'dev'));
+  app.use(helmet({ contentSecurityPolicy: false }));
+  app.use((req, res, next) => { res.setHeader('Cross-Origin-Resource-Policy', 'same-origin'); next(); });
 
-app.disable('x-powered-by');
-app.use(helmet({ contentSecurityPolicy: false }));
-app.use(cors({ origin: process.env.FRONTEND_ORIGIN || true, credentials: true }));
-app.use(compression());
-app.use(morgan('dev'));
-app.use(express.json({ limit: '2mb' }));
-app.use(express.urlencoded({ extended: true }));
+  const allowedOrigin = process.env.FRONTEND_ORIGIN || '*';
+  app.use(cors({ origin: allowedOrigin === '*' ? true : [allowedOrigin], credentials: true }));
 
-// Static under /bts/public
-app.use(`${basePath}/public`, express.static(path.resolve(__dirname, '../public')));
+  app.use(compression());
+  app.use(express.json({ limit: '2mb' }));
+  app.use(express.urlencoded({ extended: true }));
 
-// Health
-app.get(`${basePath}/health`, (_req, res) => res.json({ ok: true }));
+  const PUBLIC_DIR = path.join(__dirname, '../public');
+  const VIEWS_DIR  = path.join(__dirname, '../views');
 
-// Routers
-app.use(basePath, renewRouter); // /s/renew (GET/POST)
-app.use(basePath, haRouter);    // /ha/return|back|error
-app.use(basePath, debugRouter); // /debug/renew-scan
+  // Extrait le chemin de APP_URL pour servir sous /bts (ou autre)
+  const basePath = (process.env.APP_URL || '/bts').replace(/^https?:\/\/[^/]+/i, '') || '/bts';
 
-// 404 JSON
-app.use((req, res) => res.status(404).json({ error: 'Not found' }));
+  app.use(`${basePath}/public`, express.static(PUBLIC_DIR));
+  app.use(`${basePath}/views`,  express.static(VIEWS_DIR));
 
-export default app;
+  app.get(['/favicon.ico', `${basePath}/favicon.ico`], (_req, res) => {
+    res.type('image/x-icon').sendFile(path.join(PUBLIC_DIR, 'favicon.ico'));
+  });
+
+  app.get(`${basePath}/health`, (_req, res) => res.json({ ok: true }));
+
+  // Toutes les routes applicatives sont montées sous basePath
+  app.use(basePath, routes);
+
+  app.use((req, res) => {
+    res.status(404).json({ error: 'Not found', path: req.originalUrl });
+  });
+
+  return app;
+}

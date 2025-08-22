@@ -1,8 +1,7 @@
 // src/routes/venues.js
 import express from 'express';
-
-import Venue from '../models/Venue.js';
-import SeatCatalog from '../models/SeatCatalog.js';
+import { Venue } from '../models/Venue.js';
+import { SeatCatalog } from '../models/SeatCatalog.js';
 
 const router = express.Router();
 
@@ -23,4 +22,4 @@ router.get('/:slug/seats', async (req,res,next)=>{
   } catch(e){ next(e); }
 });
 
-module.exports = router;
+export default router;

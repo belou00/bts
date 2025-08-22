@@ -1,20 +1,36 @@
-// src/server.js
+// src/server.js (ESM)
 import 'dotenv/config';
-import app from './loaders/express.js';
-import './loaders/mongo.js';
+import express from 'express';
+import mongoose from 'mongoose';
+import initExpress from './loaders/express.js';
 
-const HOST = process.env.HOST || '127.0.0.1';
-const PORT = parseInt(process.env.PORT || '8080', 10);
-const basePath = (() => {
+const APP_ENV  = (process.env.APP_ENV || 'development').toLowerCase();
+const HOST     = process.env.HOST || '127.0.0.1';
+const PORT     = Number(process.env.PORT || 8080);
+const MONGO_URI= process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/bts';
+
+async function start() {
+  // 1) instance express
+  const app = express();
+
+  // 2) middlewares, statiques et routes (montés sous /bts)
+  initExpress(app);
+
+  // 3) Mongo (optionnel si tu as déjà un loader dédié ; sinon garde ce bloc)
   try {
-    const u = new URL(process.env.APP_URL || 'http://localhost:8080/bts');
-    return u.pathname.endsWith('/') ? u.pathname.slice(0, -1) : u.pathname;
-  } catch {
-    return '/bts';
+    await mongoose.connect(MONGO_URI, { autoIndex: true });
+    console.log('[mongo] connected');
+  } catch (err) {
+    console.error('[mongo] connection error:', err.message);
   }
-})();
 
-app.listen(PORT, HOST, () => {
-  console.log(`[bts] listening on http://${HOST}:${PORT}${basePath} (env=${process.env.APP_ENV || 'development'})`);
-  console.log(`[bts] MONGO_URI=${process.env.MONGO_URI || '(default) mongodb://127.0.0.1:27017/bts'}`);
+  // 4) écoute HTTP
+  app.listen(PORT, HOST, () => {
+    console.log(`[server] ${APP_ENV} listening on http://${HOST}:${PORT}`);
+  });
+}
+
+start().catch((err) => {
+  console.error('[server] fatal error', err);
+  process.exit(1);
 });

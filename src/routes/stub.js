@@ -1,7 +1,5 @@
 // src/routes/stub.js
-
 import express from 'express';
-
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -42,4 +40,4 @@ router.get('/stub/helloasso', (req, res) => {
   res.send(html);
 });
 
-module.exports = router;
+export default router;
