@@ -74,6 +74,22 @@ const OrderSchema = new mongoose.Schema({
   payerLastName:  { type: String, default: '' },
   payerEmail:     { type: String, index: true, default: '' },
 
+  // Corrections faites à la main depuis admin/orders. L'adresse d'origine est
+  // conservée : c'est elle qui figure sur l'attestation déjà envoyée et dans
+  // le relevé du prestataire, et la corriger l'effacerait sans trace.
+  // (Le schéma est `strict: true` : sans ce champ, l'historique serait
+  // silencieusement jeté à l'enregistrement.)
+  adminEdits: {
+    type: [new mongoose.Schema({
+      at:            { type: Date },
+      by:            { type: String, default: '' },
+      kind:          { type: String, default: '' },
+      previousEmail: { type: String, default: '' },
+      changes:       { type: [String], default: [] }
+    }, { _id: false, strict: true })],
+    default: []
+  },
+
   // number of installments (aka schedule in UI)
   paymentSplit:   { type: Number, default: 1 },
 

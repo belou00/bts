@@ -1054,6 +1054,10 @@ router.get('/plan', async (req, res) => {
       // Renvoie le sentinelle quand la vue saison est demandée, pour que
       // le <select> reste sur « Saison » après rechargement.
       selectedEventSlug: seasonScope ? SEASON_SCOPE : (selectedEvent ? selectedEvent.slug : null),
+      // Le sentinelle est truthy : une vue qui teste `selectedEventSlug` pour
+      // savoir si elle est sur un match se trompe en périmètre saison. C'est ce
+      // drapeau qui fait foi.
+      seasonScope,
       selectedEvent: selectedEvent
         ? {
             id: String(selectedEvent._id),
@@ -1277,6 +1281,10 @@ router.get('/orders', async (req, res) => {
       // Renvoie le sentinelle quand la vue saison est demandée, pour que
       // le <select> reste sur « Saison » après rechargement.
       selectedEventSlug: seasonScope ? SEASON_SCOPE : (selectedEvent ? selectedEvent.slug : null),
+      // Le sentinelle est truthy : une vue qui teste `selectedEventSlug` pour
+      // savoir si elle est sur un match se trompe en périmètre saison. C'est ce
+      // drapeau qui fait foi.
+      seasonScope,
       selectedEvent: selectedEvent
         ? {
             id: String(selectedEvent._id),

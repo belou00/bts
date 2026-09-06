@@ -1738,7 +1738,14 @@
                     <td><%= row.lineCount || 0 %></td>
                     <td><%= ((row.totalCents || 0)/100).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' }) %></td>
                     <td>
-                      <% if (ordersView.selectedEventSlug) { %>
+                      <%# « Ajuster » est l'overlay de présence d'un match : il n'a
+                          pas de sens hors d'un événement, et l'API 404 sur le
+                          sentinelle « __season__ ». En périmètre saison on offre
+                          l'édition du contact, qui est le besoin réel. %>
+                      <% if (ordersView.seasonScope) { %>
+                        <button type="button" class="btn btn-small" data-order-contact-edit data-order-id="<%= row.id %>">Contact</button>
+                        <button type="button" class="btn btn-small" data-order-seat-edit data-order-id="<%= row.id %>">Places</button>
+                      <% } else if (ordersView.selectedEventSlug) { %>
                         <button type="button" class="btn btn-small" data-attendance-edit data-order-id="<%= row.id %>">Ajuster</button>
                       <% } %>
                     </td>
@@ -1751,6 +1758,44 @@
           <div class="empty-state">Aucune commande pour cette sélection.</div>
         <% } %>
       </section>
+
+      <%# Réallocation de place — déplace les vrais documents Seat. %>
+      <div class="modal hidden" data-seat-modal>
+        <div class="modal-backdrop" data-seat-close></div>
+        <div class="modal-dialog">
+          <header class="modal-header">
+            <h3>Places de la commande</h3>
+            <button type="button" class="modal-close" data-seat-close>&times;</button>
+          </header>
+          <div class="modal-body" data-seat-body>
+            <div class="empty-state">Chargement…</div>
+          </div>
+          <footer class="modal-footer">
+            <div class="modal-summary" data-seat-summary></div>
+            <button type="button" class="btn btn-secondary" data-seat-close>Fermer</button>
+          </footer>
+        </div>
+      </div>
+
+      <%# Édition du contact — distincte de « Ajuster la présence » : elle ne
+          touche ni aux sièges ni au montant, et n'envoie aucun e-mail. %>
+      <div class="modal hidden" data-contact-modal>
+        <div class="modal-backdrop" data-contact-close></div>
+        <div class="modal-dialog">
+          <header class="modal-header">
+            <h3>Contact de la commande</h3>
+            <button type="button" class="modal-close" data-contact-close>&times;</button>
+          </header>
+          <div class="modal-body" data-contact-body>
+            <div class="empty-state">Chargement…</div>
+          </div>
+          <footer class="modal-footer">
+            <div class="modal-summary" data-contact-summary></div>
+            <button type="button" class="btn btn-secondary" data-contact-close>Annuler</button>
+            <button type="button" class="btn" data-contact-submit>Enregistrer</button>
+          </footer>
+        </div>
+      </div>
 
       <div class="modal hidden" data-attendance-modal>
         <div class="modal-backdrop" data-attendance-close></div>
@@ -3948,7 +3993,10 @@
           if (tariffEl) tariffEl.textContent = details.tariff || '—';
           if (orderIdEl) orderIdEl.textContent = details.orderId || '—';
           if (adjustBtn) {
-            if (details.orderId) {
+            // Même raison que dans le tableau des commandes : « Ajuster » vise
+            // un match. En périmètre saison le bouton partirait sur le
+            // sentinelle « __season__ » et l'API répondrait 404.
+            if (details.orderId && !PLAN_VIEW_DATA?.seasonScope) {
               adjustBtn.dataset.orderId = details.orderId;
               adjustBtn.classList.remove('hidden');
             } else {
@@ -4611,7 +4659,9 @@
           const orderId = btn.dataset.orderId;
           const container = btn.closest('[data-event-orders-block]');
           const eventSlug = container?.dataset.eventSlug || defaultEventSlug;
-          if (!orderId || !eventSlug) return;
+          // '__season__' est un sentinelle d'affichage, pas un slug d'événement :
+          // le laisser passer produit un 404 « Event not found » incompréhensible.
+          if (!orderId || !eventSlug || eventSlug === '__season__') return;
           attendanceState = { eventSlug, orderId, lineIndex: null, order: null };
           openAttendance();
           fetchAttendance();
@@ -4628,6 +4678,210 @@
         if (evt.target === attendanceModal) {
           closeAttendance();
         }
+      });
+
+      /* ===================== Order contact edit ===================== */
+      // Séparé de la présence : ne touche ni aux sièges ni au montant, et
+      // n'envoie aucun e-mail — renvoyer l'attestation reste une action à part.
+      const contactBase = <%- JSON.stringify(urlFor('/admin/order-contact')) %>;
+      const contactSuffix = <%- JSON.stringify(tokenSuffix || '') %>;
+      const contactModal = document.querySelector('[data-contact-modal]');
+      const contactBody = contactModal?.querySelector('[data-contact-body]') || null;
+      const contactSummary = contactModal?.querySelector('[data-contact-summary]') || null;
+      const contactSubmit = contactModal?.querySelector('[data-contact-submit]') || null;
+      let contactOrderId = null;
+
+      const contactUrl = (orderId) => `${contactBase}/${encodeURIComponent(orderId)}${contactSuffix}`;
+      const closeContact = () => {
+        contactModal?.classList.add('hidden');
+        contactOrderId = null;
+        if (contactSummary) contactSummary.textContent = '';
+      };
+
+      const renderContactForm = (order) => {
+        if (!contactBody) return;
+        const val = (v) => escapeHtml(v || '');
+        const lineRows = (order.lines || []).map((l) => `
+          <tr>
+            <td><code>${escapeHtml(l.seatId || l.zoneKey || '—')}</code></td>
+            <td><input type="text" data-contact-holder-first data-line-index="${l.index}" value="${val(l.holderFirstName)}"></td>
+            <td><input type="text" data-contact-holder-last data-line-index="${l.index}" value="${val(l.holderLastName)}"></td>
+          </tr>`).join('');
+        contactBody.innerHTML = `
+          <form data-contact-form>
+            <p class="muted">Commande <code>${escapeHtml(order.id)}</code> — ${escapeHtml(order.flow || '')} ${escapeHtml(order.seasonCode || '')} — statut ${escapeHtml(order.status || '')}</p>
+            <label>E-mail du payeur<input type="email" data-contact-email value="${val(order.payerEmail)}" required></label>
+            <label>Prénom<input type="text" data-contact-first value="${val(order.payerFirstName)}"></label>
+            <label>Nom<input type="text" data-contact-last value="${val(order.payerLastName)}"></label>
+            ${lineRows ? `<h4>Porteurs</h4><table class="records-table"><thead><tr><th>Place</th><th>Prénom</th><th>Nom</th></tr></thead><tbody>${lineRows}</tbody></table>` : ''}
+            <p class="muted">Aucun e-mail n'est envoyé : le renvoi d'attestation est une action séparée.</p>
+          </form>`;
+      };
+
+      const fetchContact = async () => {
+        if (!contactOrderId || !contactBody) return;
+        try {
+          const res = await fetch(contactUrl(contactOrderId), { headers: { Accept: 'application/json' } });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data?.ok) throw new Error(data?.error || `Chargement impossible (${res.status})`);
+          renderContactForm(data.order);
+        } catch (err) {
+          contactBody.innerHTML = `<div class="error">${escapeHtml(err.message || 'Erreur inconnue')}</div>`;
+        }
+      };
+
+      const submitContact = async () => {
+        if (!contactOrderId || !contactBody) return;
+        const form = contactBody.querySelector('[data-contact-form]');
+        if (!form) return;
+        const payload = {
+          payerEmail: form.querySelector('[data-contact-email]')?.value || '',
+          payerFirstName: form.querySelector('[data-contact-first]')?.value || '',
+          payerLastName: form.querySelector('[data-contact-last]')?.value || '',
+          lines: Array.from(form.querySelectorAll('[data-contact-holder-first]')).map((input) => {
+            const index = Number(input.dataset.lineIndex);
+            const last = form.querySelector(`[data-contact-holder-last][data-line-index="${index}"]`);
+            return { index, holderFirstName: input.value || '', holderLastName: last?.value || '' };
+          })
+        };
+        try {
+          const res = await fetch(contactUrl(contactOrderId), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data?.ok) throw new Error(data?.error || `Enregistrement impossible (${res.status})`);
+          if (contactSummary) contactSummary.textContent = data.message || 'Enregistré.';
+          if (data.changed) setTimeout(() => window.location.reload(), 700);
+        } catch (err) {
+          if (contactSummary) contactSummary.textContent = err.message || 'Erreur inconnue';
+        }
+      };
+
+      document.querySelectorAll('[data-contact-close]').forEach(btn => btn.addEventListener('click', closeContact));
+      contactModal?.addEventListener('click', (evt) => { if (evt.target === contactModal) closeContact(); });
+      contactSubmit?.addEventListener('click', submitContact);
+      document.addEventListener('keydown', (evt) => {
+        if (evt.key === 'Escape' && contactModal && !contactModal.classList.contains('hidden')) closeContact();
+      });
+
+      document.querySelectorAll('[data-order-contact-edit]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          contactOrderId = btn.dataset.orderId || null;
+          if (!contactOrderId) return;
+          if (contactSummary) contactSummary.textContent = '';
+          if (contactBody) contactBody.innerHTML = '<div class="empty-state">Chargement…</div>';
+          contactModal?.classList.remove('hidden');
+          fetchContact();
+        });
+      });
+
+      /* ===================== Order seat reallocation ===================== */
+      // Déplace les vrais documents Seat. Une place occupée n'est jamais
+      // bloquante : elle est signalée, et l'admin confirme s'il veut passer outre.
+      const seatBase = <%- JSON.stringify(urlFor('/admin/order-seat')) %>;
+      const seatModal = document.querySelector('[data-seat-modal]');
+      const seatBody = seatModal?.querySelector('[data-seat-body]') || null;
+      const seatSummary = seatModal?.querySelector('[data-seat-summary]') || null;
+      let seatOrderId = null;
+
+      const seatUrl = (orderId) => `${seatBase}/${encodeURIComponent(orderId)}${contactSuffix}`;
+      const closeSeat = () => {
+        seatModal?.classList.add('hidden');
+        seatOrderId = null;
+        if (seatSummary) seatSummary.textContent = '';
+      };
+
+      const seatStateLabel = (seat) => {
+        if (!seat) return '<span class="muted">inconnue</span>';
+        const cls = seat.status === 'booked' ? 'booking-warn' : 'muted';
+        return `<span class="${cls}">${escapeHtml(seat.status)}</span>`;
+      };
+
+      const renderSeatForm = (order) => {
+        if (!seatBody) return;
+        const rows = (order.lines || []).map((l) => {
+          if (l.unitType === 'zone') {
+            return `<tr><td>${escapeHtml(l.zoneKey || '—')}</td><td colspan="3" class="muted">place en zone — pas de siège à déplacer</td></tr>`;
+          }
+          return `<tr>
+            <td><code>${escapeHtml(l.seatId || '—')}</code> ${seatStateLabel(l.seat)}</td>
+            <td>${escapeHtml(l.holder || '—')}</td>
+            <td>${escapeHtml(l.tariffCode || '—')}</td>
+            <td>
+              <input type="text" data-seat-target data-line-index="${l.index}" placeholder="N2-A-07" size="10">
+              <button type="button" class="btn btn-small" data-seat-move data-line-index="${l.index}">Déplacer</button>
+            </td>
+          </tr>`;
+        }).join('');
+        seatBody.innerHTML = `
+          <p class="muted">Commande <code>${escapeHtml(order.id)}</code> — ${escapeHtml(order.flow || '')} ${escapeHtml(order.seasonCode || '')} — statut ${escapeHtml(order.status || '')}</p>
+          <table class="records-table"><thead><tr><th>Place</th><th>Porteur</th><th>Tarif</th><th>Déplacer vers</th></tr></thead><tbody>${rows}</tbody></table>
+          <p class="muted">Le tarif n'est jamais modifié par un déplacement. Aucun e-mail n'est envoyé.</p>`;
+        seatBody.querySelectorAll('[data-seat-move]').forEach(btn => {
+          btn.addEventListener('click', () => moveSeat(Number(btn.dataset.lineIndex), false));
+        });
+      };
+
+      const fetchSeats = async () => {
+        if (!seatOrderId || !seatBody) return;
+        try {
+          const res = await fetch(seatUrl(seatOrderId), { headers: { Accept: 'application/json' } });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data?.ok) throw new Error(data?.error || `Chargement impossible (${res.status})`);
+          renderSeatForm(data.order);
+        } catch (err) {
+          seatBody.innerHTML = `<div class="error">${escapeHtml(err.message || 'Erreur inconnue')}</div>`;
+        }
+      };
+
+      const moveSeat = async (lineIndex, force) => {
+        if (!seatOrderId || !seatBody) return;
+        const input = seatBody.querySelector(`[data-seat-target][data-line-index="${lineIndex}"]`);
+        const targetSeatId = (input?.value || '').trim();
+        if (!targetSeatId) { if (seatSummary) seatSummary.textContent = 'Indiquer une place de destination.'; return; }
+        try {
+          const res = await fetch(seatUrl(seatOrderId), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ lineIndex, targetSeatId, force: Boolean(force) })
+          });
+          const data = await res.json().catch(() => ({}));
+          // 409 + needsForce : la place n'est pas libre. On expose exactement
+          // pourquoi, et on laisse confirmer — jamais de contournement muet.
+          if (res.status === 409 && data?.needsForce) {
+            const detail = [data.error, ...(data.derivedEventOrders || []).map(d => `commande de match ${d.orderId} (${d.status})`)].join(' ');
+            if (window.confirm(`${detail}\n\nDéplacer quand même vers ${targetSeatId} ?`)) {
+              return moveSeat(lineIndex, true);
+            }
+            if (seatSummary) seatSummary.textContent = 'Déplacement annulé.';
+            return;
+          }
+          if (!res.ok || !data?.ok) throw new Error(data?.error || `Déplacement impossible (${res.status})`);
+          const notes = (data.warnings || []).join(' ');
+          if (seatSummary) seatSummary.textContent = `${data.from} → ${data.to}. ${data.message || ''} ${notes}`.trim();
+          await fetchSeats();
+        } catch (err) {
+          if (seatSummary) seatSummary.textContent = err.message || 'Erreur inconnue';
+        }
+      };
+
+      document.querySelectorAll('[data-seat-close]').forEach(btn => btn.addEventListener('click', closeSeat));
+      seatModal?.addEventListener('click', (evt) => { if (evt.target === seatModal) closeSeat(); });
+      document.addEventListener('keydown', (evt) => {
+        if (evt.key === 'Escape' && seatModal && !seatModal.classList.contains('hidden')) closeSeat();
+      });
+
+      document.querySelectorAll('[data-order-seat-edit]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          seatOrderId = btn.dataset.orderId || null;
+          if (!seatOrderId) return;
+          if (seatSummary) seatSummary.textContent = '';
+          if (seatBody) seatBody.innerHTML = '<div class="empty-state">Chargement…</div>';
+          seatModal?.classList.remove('hidden');
+          fetchSeats();
+        });
       });
 
       /* ===================== Renewers panel ===================== */
