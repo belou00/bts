@@ -502,6 +502,76 @@ export const adminScriptGroups = [
         }
       },
       {
+        id: 'reprovision-renewer-seats',
+        label: 'Re-provision One Renewer',
+        order: 1.5,
+        path: 'scripts/03-season-management/reprovision-renewer-seats.js',
+        command: 'node scripts/03-season-management/reprovision-renewer-seats.js <seasonCode> (--email=<email> | --group=<groupKey> | --subscriber=<id>) [--venue=<slug>] [--apply] [--force-busy] [--reassign]',
+        run: { script: 'scripts/03-season-management/reprovision-renewer-seats.js', args: [] },
+        description: 'Recale les sièges d\'UN renouveleur après modification de sa fiche : provisionne ce qui manque, relâche ce qui n\'est plus à lui.',
+        notes: [
+          'À utiliser à la place de « Provision Seats for Renewal » une fois la campagne lancée : celui-ci balaie toute la saison et écrase les sièges en cours de paiement.',
+          'Sans « Appliquer », rien n\'est écrit : le script affiche le plan (à provisionner / à relâcher / déjà en place / déjà payé).',
+          'Un renouveleur est un groupe : e-mail et clé de groupe agissent sur toutes ses lignes de sièges.',
+          'Un siège déjà payé (booked) n\'est jamais touché. Un siège en cours de checkout (busy) non plus, sauf case « Forcer » — l\'écraser ferait atterrir le paiement sur un siège qui ne lui est plus attribué.',
+          'Un siège provisionné pour un autre abonné n\'est repris qu\'avec « Réattribuer ».'
+        ],
+        form: {
+          fields: [
+            {
+              name: 'season',
+              label: 'Code saison',
+              placeholder: '2026-2027',
+              required: true,
+              arg: { type: 'positional', index: 0 }
+            },
+            {
+              name: 'email',
+              label: 'E-mail du renouveleur',
+              placeholder: 'prenom.nom@example.org',
+              hint: 'Un seul sélecteur à la fois : e-mail, clé de groupe ou identifiant.',
+              arg: { type: 'option', template: '--email=${value}' }
+            },
+            {
+              name: 'group',
+              label: 'Clé de groupe (alternative)',
+              placeholder: 'g-00123',
+              arg: { type: 'option', template: '--group=${value}' }
+            },
+            {
+              name: 'subscriber',
+              label: 'Identifiant abonné (alternative — une seule ligne)',
+              placeholder: '6a9be531fe46a290191c101e',
+              arg: { type: 'option', template: '--subscriber=${value}' }
+            },
+            {
+              name: 'venue',
+              label: 'Slug du lieu (optionnel)',
+              placeholder: 'stadium',
+              arg: { type: 'option', template: '--venue=${value}' }
+            },
+            {
+              name: 'apply',
+              label: 'Appliquer (sinon simulation)',
+              type: 'checkbox',
+              arg: { type: 'flag', flag: '--apply' }
+            },
+            {
+              name: 'forceBusy',
+              label: 'Forcer les sièges en cours de checkout',
+              type: 'checkbox',
+              arg: { type: 'flag', flag: '--force-busy' }
+            },
+            {
+              name: 'reassign',
+              label: 'Réattribuer un siège provisionné pour un autre abonné',
+              type: 'checkbox',
+              arg: { type: 'flag', flag: '--reassign' }
+            }
+          ]
+        }
+      },
+      {
         id: 'remove-renewers',
         label: 'Remove Renewers (clean restart)',
         order: 5,
