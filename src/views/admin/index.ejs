@@ -1744,6 +1744,7 @@
                           l'édition du contact, qui est le besoin réel. %>
                       <% if (ordersView.seasonScope) { %>
                         <button type="button" class="btn btn-small" data-order-contact-edit data-order-id="<%= row.id %>">Contact</button>
+                        <button type="button" class="btn btn-small" data-order-seat-edit data-order-id="<%= row.id %>">Places</button>
                       <% } else if (ordersView.selectedEventSlug) { %>
                         <button type="button" class="btn btn-small" data-attendance-edit data-order-id="<%= row.id %>">Ajuster</button>
                       <% } %>
@@ -1757,6 +1758,24 @@
           <div class="empty-state">Aucune commande pour cette sélection.</div>
         <% } %>
       </section>
+
+      <%# Réallocation de place — déplace les vrais documents Seat. %>
+      <div class="modal hidden" data-seat-modal>
+        <div class="modal-backdrop" data-seat-close></div>
+        <div class="modal-dialog">
+          <header class="modal-header">
+            <h3>Places de la commande</h3>
+            <button type="button" class="modal-close" data-seat-close>&times;</button>
+          </header>
+          <div class="modal-body" data-seat-body>
+            <div class="empty-state">Chargement…</div>
+          </div>
+          <footer class="modal-footer">
+            <div class="modal-summary" data-seat-summary></div>
+            <button type="button" class="btn btn-secondary" data-seat-close>Fermer</button>
+          </footer>
+        </div>
+      </div>
 
       <%# Édition du contact — distincte de « Ajuster la présence » : elle ne
           touche ni aux sièges ni au montant, et n'envoie aucun e-mail. %>
@@ -4755,6 +4774,113 @@
           if (contactBody) contactBody.innerHTML = '<div class="empty-state">Chargement…</div>';
           contactModal?.classList.remove('hidden');
           fetchContact();
+        });
+      });
+
+      /* ===================== Order seat reallocation ===================== */
+      // Déplace les vrais documents Seat. Une place occupée n'est jamais
+      // bloquante : elle est signalée, et l'admin confirme s'il veut passer outre.
+      const seatBase = <%- JSON.stringify(urlFor('/admin/order-seat')) %>;
+      const seatModal = document.querySelector('[data-seat-modal]');
+      const seatBody = seatModal?.querySelector('[data-seat-body]') || null;
+      const seatSummary = seatModal?.querySelector('[data-seat-summary]') || null;
+      let seatOrderId = null;
+
+      const seatUrl = (orderId) => `${seatBase}/${encodeURIComponent(orderId)}${contactSuffix}`;
+      const closeSeat = () => {
+        seatModal?.classList.add('hidden');
+        seatOrderId = null;
+        if (seatSummary) seatSummary.textContent = '';
+      };
+
+      const seatStateLabel = (seat) => {
+        if (!seat) return '<span class="muted">inconnue</span>';
+        const cls = seat.status === 'booked' ? 'booking-warn' : 'muted';
+        return `<span class="${cls}">${escapeHtml(seat.status)}</span>`;
+      };
+
+      const renderSeatForm = (order) => {
+        if (!seatBody) return;
+        const rows = (order.lines || []).map((l) => {
+          if (l.unitType === 'zone') {
+            return `<tr><td>${escapeHtml(l.zoneKey || '—')}</td><td colspan="3" class="muted">place en zone — pas de siège à déplacer</td></tr>`;
+          }
+          return `<tr>
+            <td><code>${escapeHtml(l.seatId || '—')}</code> ${seatStateLabel(l.seat)}</td>
+            <td>${escapeHtml(l.holder || '—')}</td>
+            <td>${escapeHtml(l.tariffCode || '—')}</td>
+            <td>
+              <input type="text" data-seat-target data-line-index="${l.index}" placeholder="N2-A-07" size="10">
+              <button type="button" class="btn btn-small" data-seat-move data-line-index="${l.index}">Déplacer</button>
+            </td>
+          </tr>`;
+        }).join('');
+        seatBody.innerHTML = `
+          <p class="muted">Commande <code>${escapeHtml(order.id)}</code> — ${escapeHtml(order.flow || '')} ${escapeHtml(order.seasonCode || '')} — statut ${escapeHtml(order.status || '')}</p>
+          <table class="records-table"><thead><tr><th>Place</th><th>Porteur</th><th>Tarif</th><th>Déplacer vers</th></tr></thead><tbody>${rows}</tbody></table>
+          <p class="muted">Le tarif n'est jamais modifié par un déplacement. Aucun e-mail n'est envoyé.</p>`;
+        seatBody.querySelectorAll('[data-seat-move]').forEach(btn => {
+          btn.addEventListener('click', () => moveSeat(Number(btn.dataset.lineIndex), false));
+        });
+      };
+
+      const fetchSeats = async () => {
+        if (!seatOrderId || !seatBody) return;
+        try {
+          const res = await fetch(seatUrl(seatOrderId), { headers: { Accept: 'application/json' } });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data?.ok) throw new Error(data?.error || `Chargement impossible (${res.status})`);
+          renderSeatForm(data.order);
+        } catch (err) {
+          seatBody.innerHTML = `<div class="error">${escapeHtml(err.message || 'Erreur inconnue')}</div>`;
+        }
+      };
+
+      const moveSeat = async (lineIndex, force) => {
+        if (!seatOrderId || !seatBody) return;
+        const input = seatBody.querySelector(`[data-seat-target][data-line-index="${lineIndex}"]`);
+        const targetSeatId = (input?.value || '').trim();
+        if (!targetSeatId) { if (seatSummary) seatSummary.textContent = 'Indiquer une place de destination.'; return; }
+        try {
+          const res = await fetch(seatUrl(seatOrderId), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ lineIndex, targetSeatId, force: Boolean(force) })
+          });
+          const data = await res.json().catch(() => ({}));
+          // 409 + needsForce : la place n'est pas libre. On expose exactement
+          // pourquoi, et on laisse confirmer — jamais de contournement muet.
+          if (res.status === 409 && data?.needsForce) {
+            const detail = [data.error, ...(data.derivedEventOrders || []).map(d => `commande de match ${d.orderId} (${d.status})`)].join(' ');
+            if (window.confirm(`${detail}\n\nDéplacer quand même vers ${targetSeatId} ?`)) {
+              return moveSeat(lineIndex, true);
+            }
+            if (seatSummary) seatSummary.textContent = 'Déplacement annulé.';
+            return;
+          }
+          if (!res.ok || !data?.ok) throw new Error(data?.error || `Déplacement impossible (${res.status})`);
+          const notes = (data.warnings || []).join(' ');
+          if (seatSummary) seatSummary.textContent = `${data.from} → ${data.to}. ${data.message || ''} ${notes}`.trim();
+          await fetchSeats();
+        } catch (err) {
+          if (seatSummary) seatSummary.textContent = err.message || 'Erreur inconnue';
+        }
+      };
+
+      document.querySelectorAll('[data-seat-close]').forEach(btn => btn.addEventListener('click', closeSeat));
+      seatModal?.addEventListener('click', (evt) => { if (evt.target === seatModal) closeSeat(); });
+      document.addEventListener('keydown', (evt) => {
+        if (evt.key === 'Escape' && seatModal && !seatModal.classList.contains('hidden')) closeSeat();
+      });
+
+      document.querySelectorAll('[data-order-seat-edit]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          seatOrderId = btn.dataset.orderId || null;
+          if (!seatOrderId) return;
+          if (seatSummary) seatSummary.textContent = '';
+          if (seatBody) seatBody.innerHTML = '<div class="empty-state">Chargement…</div>';
+          seatModal?.classList.remove('hidden');
+          fetchSeats();
         });
       });
 
