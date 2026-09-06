@@ -26,6 +26,7 @@ import adminRoutes from './admin/index.js';
 import supervisionRoutes from './admin/supervision.routes.js';
 import renewersRoutes from './admin/renewers.routes.js';
 import adminVouchersRoutes from './admin/vouchers.routes.js';
+import adminOrderContactRoutes from './admin/order-contact.routes.js';
 import payRoutes from './pay.js';      
 import controlGuestlistRoutes from './control/guestlist.js';
 import qrRoutes   from './qr.js';
@@ -1102,6 +1103,7 @@ export default function routes(router) {
 
   router.use('/admin/renewers', renewersRoutes);
   router.use('/admin/vouchers', adminVouchersRoutes);
+  router.use('/admin/order-contact', adminOrderContactRoutes);
 
   router.use('/', scanRoutes);
   router.use('/', controlGuestlistRoutes);
