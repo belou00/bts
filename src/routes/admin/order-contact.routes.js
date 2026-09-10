@@ -131,12 +131,14 @@ router.post('/:orderId', async (req, res) => {
       message: 'Contact mis à jour. Aucun e-mail n\'a été envoyé.'
     });
   } catch (err) {
-    // Un abonné payé est unique par (saison, lieu, groupe, e-mail) :
-    // recopier l'adresse d'une commande payée existante viole cet index.
+    // `uniq_paid_per_payer` refusait de recopier l'adresse d'une autre commande
+    // payée du même groupe. Il a été retiré, mais le cas reste traité : une base
+    // non encore migrée le lève toujours, et un autre index unique pourrait le
+    // lever demain.
     if (err?.code === 11000) {
       return res.status(409).json({
         ok: false,
-        error: 'Cette adresse est déjà celle d\'une autre commande payée du même groupe (index uniq_paid_per_payer). Utiliser une adresse distincte.'
+        error: 'Un index d\'unicité refuse cette adresse (probablement uniq_paid_per_payer, sur une base non migrée). Utiliser une adresse distincte, ou retirer l\'index : scripts/06-misc/drop-uniq-paid-per-payer.js'
       });
     }
     console.error('[admin/order-contact]', err);
