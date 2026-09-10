@@ -578,8 +578,8 @@ export async function finalizePaidIfNoConflict(order) {
     // Les sièges viennent d'être passés à 'booked' ; si l'enregistrement de la
     // commande échoue APRÈS, on laisse des places réservées au nom d'une
     // commande qui n'est pas payée — l'état le plus difficile à rattraper.
-    // Le cas réel : l'index uniq_paid_per_payer refuse une SECONDE commande
-    // payée pour le même (saison, lieu, groupKey, payeur).
+    // Le repli reste nécessaire quelle qu'en soit la cause : `uniq_paid_per_payer`
+    // a été retiré (voir Order.js), mais une écriture peut toujours échouer.
     {
       const failed = await commitPaidOrder(order, meta, now, {
         onFailure: () => restoreSeatStates(order, priorSeatStates)
@@ -593,11 +593,12 @@ export async function finalizePaidIfNoConflict(order) {
 /**
  * Enregistre le passage à 'paid', en traitant l'échec comme un cas prévu.
  *
- * L'index uniq_paid_per_payer refuse une SECONDE commande payée pour le même
- * (saison, lieu, groupKey, payeur). Comme groupKey vaut « SUBSCRIPTION-<saison> »
- * ou « RENEW-<saison> » pour tout le monde, cela revient à : un seul paiement
- * abouti par personne et par saison. Le rejet arrive APRÈS l'écriture des
- * sièges — d'où le repli fourni par l'appelant.
+ * Écrit APRÈS le passage des sièges à `booked` : un échec ici laisserait des
+ * places réservées pour une commande impayée, d'où le repli fourni par
+ * l'appelant. Le doublon (E11000) reste distingué des autres échecs, mais il
+ * ne désigne plus un cas particulier depuis le retrait de `uniq_paid_per_payer` :
+ * la protection contre la double réservation est portée par `Seat` en amont
+ * (updateMany conditionnel), pas par un index sur les commandes.
  *
  * @returns {null|object} null si tout va bien, sinon le résultat d'échec.
  */
