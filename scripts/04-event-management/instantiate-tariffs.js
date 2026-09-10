@@ -229,6 +229,13 @@ try {
     if ((res.upsertedCount ?? 0) > 0 || (res.modifiedCount ?? 0) > 0) priceUpserts++;
   }
 
+  // Trace du catalogue employé : sans elle, rien ne relie plus tard la table
+  // d'un événement à la grille dont elle provient (diagnose-event-pricing.js
+  // devait le deviner par recoupement).
+  await Event.updateOne({ _id: event._id }, {
+    $set: { 'meta.tariffCatalogs': catalogList, 'meta.tariffInstantiatedAt': new Date() }
+  });
+
   const metaCount = priceDocs.filter(d => d.metaZone).length;
   console.log(`✅ Tariffs upserts=${tariffUpserts} · TariffPrice upserts=${priceUpserts}`
     + (metaCount ? ` (dont ${metaCount} ligne(s) de méta-zone)` : ''));

@@ -73,17 +73,38 @@ async function main() {
   }
 
   // --- Catalogue source : la grille écrite à la main ---
-  const catalogs = await TariffPriceCatalog.distinct('catalogSlug');
-  console.log(`\n=== Catalogues disponibles ===`);
+  //
+  // L'événement ne retient pas de quel catalogue sa table a été instanciée
+  // (instantiate-tariffs.js l'enregistre désormais, mais pas rétroactivement).
+  // À défaut, on identifie le candidat par recoupement : le catalogue dont les
+  // lignes PAR ZONE couvrent exactement celles de l'événement. Suggérer tous
+  // les catalogues contenant des méta-zones enverrait réinstancier depuis une
+  // grille d'abonnement sur un match.
+  const recorded = (ev.meta?.tariffCatalogs || []).map(String).filter(Boolean);
+  const eventZoneRows = new Set(byZone.map(p => `${up(p.zoneKey)}::${up(p.tariffCode)}`));
+  // Même portée que l'instanciation : le catalogue du lieu, sinon un global.
+  // Sans ce filtre, les catalogues d'autres lieux ressortent dès qu'ils
+  // partagent un nom de zone (DEBOUT, N1…), ce qui est fréquent.
+  const catalogScope = { $or: [{ venueSlug: ev.venueSlug }, { venueSlug: null }] };
+  const catalogs = await TariffPriceCatalog.distinct('catalogSlug', catalogScope);
+  const candidates = [];
+  console.log(`\n=== Catalogues du lieu ${ev.venueSlug} ===`);
   for (const slug of catalogs) {
-    const rows = await TariffPriceCatalog.find({ catalogSlug: slug }).lean();
+    const rows = await TariffPriceCatalog.find({ catalogSlug: slug, ...catalogScope }).lean();
     const meta = rows.filter(r => up(r.metaZone)).length;
-    console.log(`  ${slug.padEnd(24)} ${rows.length} ligne(s)  (dont ${meta} par méta-zone)`);
-    // Le cas qui a motivé ce script : la grille existe, mais pas dans l'événement.
-    if (meta && !byMeta.length && prices.length) {
-      problems.push(`Le catalogue « ${slug} » contient ${meta} ligne(s) par méta-zone, absente(s) de la table `
-        + `de l'événement : réinstancier (instantiate-tariffs.js --event=${ev.slug} --catalog=${slug}).`);
-    }
+    const zoneRows = new Set(rows.filter(r => up(r.zoneKey)).map(r => `${up(r.zoneKey)}::${up(r.tariffCode)}`));
+    const covers = eventZoneRows.size > 0 && [...eventZoneRows].every(k => zoneRows.has(k));
+    const isSource = recorded.includes(slug) || (!recorded.length && covers);
+    if (isSource && meta && !byMeta.length) candidates.push({ slug, meta });
+    console.log(`  ${slug.padEnd(24)} ${String(rows.length).padStart(3)} ligne(s)  (dont ${meta} par méta-zone)`
+      + (isSource ? '  ← source probable de cet événement' : ''));
+  }
+  for (const c of candidates) {
+    problems.push(`Le catalogue « ${c.slug} » contient ${c.meta} ligne(s) par méta-zone, absente(s) de la table `
+      + `de l'événement : réinstancier (instantiate-tariffs.js --event=${ev.slug} --catalog=${c.slug}).`);
+  }
+  if (!candidates.length && !byMeta.length && prices.length) {
+    console.log('  (aucun catalogue ne correspond aux lignes de l\'événement — vérifier le slug employé)');
   }
 
   // --- Zones et rattachement aux méta-zones ---
@@ -93,6 +114,26 @@ async function main() {
     console.log(`  ${up(z.key).padEnd(14)} type=${String(z.type).padEnd(9)} accès=${String(z.access || 'PUBLIC').padEnd(7)}`
       + ` méta-zone=${up(z.metaZone) || '—'}`);
   }
+  // Order.LineSchema.zoneType n'accepte que seated|standing, et la valeur est
+  // recopiée telle quelle depuis Zone.type. Une zone au type hérité fait donc
+  // échouer l'enregistrement de la commande AU MOMENT DU PAIEMENT, sans que
+  // rien n'ait alerté avant.
+  const VALID_ZONE_TYPES = ['seated', 'standing'];
+  const badTypes = zones.filter(z => !VALID_ZONE_TYPES.includes(String(z.type)));
+  if (badTypes.length) {
+    problems.push(`Type de zone invalide (attendu seated|standing) : `
+      + badTypes.map(z => `${up(z.key)}=${z.type}`).join(', ')
+      + ` — toute commande touchant ces zones échouera à l'enregistrement (Order validation failed).`);
+  }
+
+  // Une zone sans méta-zone ne reçoit aucun prix d'une grille écrite par
+  // méta-zone : elle reste insélectionnable même après réinstanciation.
+  const orphanZones = zones.filter(z => !up(z.metaZone) && (z.access || 'PUBLIC') === 'PUBLIC' && z.type === 'seated');
+  if (orphanZones.length && byMeta.length === 0 && catalogs.length) {
+    problems.push(`Zones PUBLIC assises sans méta-zone : ${orphanZones.map(z => up(z.key)).join(', ')}`
+      + ` — elles resteront sans tarif si la grille est rédigée par méta-zone (set-zone-metazone.js).`);
+  }
+
   const metaZonesUsed = new Set(byMeta.map(p => up(p.metaZone)));
   for (const mz of metaZonesUsed) {
     const attached = zones.filter(z => up(z.metaZone) === mz);
