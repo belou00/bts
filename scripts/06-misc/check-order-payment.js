@@ -172,13 +172,13 @@ async function inspect(order, { commit, allowCanceled = false, force = false }) 
   const fin = await finalizePaidIfNoConflict(order);
   if (!fin.ok) {
     if (fin.duplicate) {
-      // Cas courant en test comme en production : le payeur a déjà une commande
-      // payée pour cette saison. L'index uniq_paid_per_payer l'interdit — un
-      // seul paiement abouti par personne, par saison et par groupKey.
-      console.log('  ❌ Ce payeur a DÉJÀ une commande payée pour cette saison.');
-      console.log('     index uniq_paid_per_payer : (saison, lieu, groupKey, payeur) — un seul « paid ».');
-      console.log('     Soit ce paiement fait double emploi (à rembourser), soit il s\'agit d\'un');
-      console.log('     second achat légitime — et c\'est alors l\'index qu\'il faut revoir.');
+      // `uniq_paid_per_payer` produisait ce cas sur une deuxième commande
+      // parfaitement légitime ; il a été retiré. Sur une base déjà migrée, un
+      // doublon signale donc un vrai conflit d'unicité, pas un second achat.
+      console.log('  ❌ Écriture refusée pour cause de doublon (E11000).');
+      console.log('     Si cette base porte encore uniq_paid_per_payer, c\'est un faux positif :');
+      console.log('       node scripts/06-misc/drop-uniq-paid-per-payer.js          (état des lieux)');
+      console.log('       node scripts/06-misc/fix-payer-group-collision.js --order=' + order._id);
       console.log('     Les sièges ont été remis dans leur état antérieur ; la commande est « failed ».');
       return;
     }

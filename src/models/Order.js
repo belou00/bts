@@ -135,16 +135,32 @@ const OrderSchema = new mongoose.Schema({
 
 /* ----- Indexes ----- */
 
-// (1) Unique: only one PAID per (season, venue, groupKey)
 // Index non-unique pour filtrer/rapporter par groupe+statut
 OrderSchema.index(
   { seasonCode:1, venueSlug:1, groupKey:1, status:1 },
   { name:'idx_group_status' }
 );
-OrderSchema.index(
-  { seasonCode:1, venueSlug:1, groupKey:1, payerEmail:1, status:1 },
-  { name:'uniq_paid_per_payer', unique:true, partialFilterExpression:{ status:'paid' } }
-);
+
+// `uniq_paid_per_payer` — unique sur (saison, lieu, groupKey, payeur) parmi les
+// commandes payées — a été retiré (scripts/06-misc/drop-uniq-paid-per-payer.js).
+//
+// Il visait le double paiement mais ne l'exprimait pas : combiné au groupKey
+// constant par saison de l'époque, il signifiait « un seul paiement abouti par
+// personne et par saison » et refusait la deuxième commande légitime d'un même
+// acheteur — après réservation des sièges. Depuis que subscription.js et
+// renew.js émettent un groupKey unique par commande, il ne pouvait plus
+// déclencher que sur des faux positifs hérités.
+//
+// Ce qu'il prétendait protéger l'est déjà, et au bon niveau : `Seat` porte
+// l'index unique `uniq_seat_per_season_venue` (un document par siège), et
+// finalizePaidIfNoConflict fait passer les sièges à `booked` par un updateMany
+// conditionnel — un siège déjà `booked` ne satisfait plus le filtre, la
+// commande est rejetée. C'est atomique, et cela porte sur la place plutôt que
+// sur le payeur.
+//
+// Pas de remplaçant côté commande : un index unique sur `lines.seatId` n'est
+// pas praticable, les lignes ZONE ayant un seatId virtuel vide ou partagé —
+// vérifié, la création échoue en E11000 sur ces lignes-là.
 
 OrderSchema.index(
   { eventId:1, parentOrderId:1, status:1 },
